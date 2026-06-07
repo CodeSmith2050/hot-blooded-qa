@@ -1,0 +1,31 @@
+{
+  "name": "hot-blooded-qa-backend",
+  "version": "1.0.0",
+  "description": "热血问答 - 无偿献血问卷调研系统后端",
+  "main": "src/app.js",
+  "scripts": {
+    "dev": "nodemon src/app.js",
+    "start": "node src/app.js",
+    "test": "jest"
+  },
+  "keywords": [
+    "questionnaire",
+    "survey",
+    "blood-donation"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-validator": "^7.0.1",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.0.3",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

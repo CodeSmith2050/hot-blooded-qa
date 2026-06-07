@@ -1,37 +1,82 @@
-# 热血问答
+# 热血问答 - 目录结构
 
-#### 介绍
-开发一个问卷调查网站
+## 项目结构
 
-#### 软件架构
-软件架构说明
+```
+hot-blooded-qa/
+├── docs/                      # 项目文档
+│   ├── PRD.md                # 产品需求文档
+│   └── 可行性方案.md          # 可行性方案
+├── backend/                   # 后端代码
+│   ├── controllers/           # 控制器层（处理请求逻辑）
+│   │   ├── questionnaire.js   # 问卷相关接口
+│   │   ├── answer.js         # 答案相关接口
+│   │   └── user.js           # 用户相关接口
+│   ├── models/               # 数据模型（MongoDB Schema）
+│   │   ├── Questionnaire.js   # 问卷模型
+│   │   ├── Answer.js         # 答案模型
+│   │   └── User.js           # 用户模型
+│   ├── routes/                # 路由配置
+│   │   └── index.js          # 路由入口
+│   ├── middleware/            # 中间件
+│   │   └── auth.js           # 认证中间件
+│   ├── utils/                 # 工具函数
+│   │   └── excel.js          # Excel处理工具
+│   ├── src/                   # 源代码
+│   │   └── app.js            # 应用入口
+│   └── package.json           # 依赖配置
+├── frontend/                  # 前端代码
+│   ├── src/
+│   │   ├── components/        # 通用组件
+│   │   │   ├── QuestionItem.jsx    # 问题组件
+│   │   │   ├── Chart.jsx           # 图表组件
+│   │   │   └── Layout.jsx          # 布局组件
+│   │   ├── pages/             # 页面组件
+│   │   │   ├── Admin/         # 管理后台
+│   │   │   │   ├── Dashboard.jsx   # 仪表盘
+│   │   │   │   ├── QuestionnaireList.jsx  # 问卷列表
+│   │   │   │   ├── QuestionnaireEdit.jsx  # 问卷编辑
+│   │   │   │   └── DataAnalysis.jsx       # 数据分析
+│   │   │   └── Public/        # 公共页面
+│   │   │       └── QuestionnaireFill.jsx  # 问卷填写
+│   │   ├── services/          # API服务
+│   │   │   └── api.js         # API封装
+│   │   ├── store/             # 状态管理
+│   │   │   └── index.js       # 状态配置
+│   │   └── styles/            # 样式文件
+│   ├── public/                # 静态资源
+│   ├── index.html             # HTML入口
+│   └── package.json           # 依赖配置
+└── README.md                  # 项目说明
+```
 
+## 技术栈
 
-#### 安装教程
+### 后端
+- **Runtime**: Node.js 18+
+- **Framework**: Express.js
+- **Database**: MongoDB
+- **Authentication**: JWT
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+### 前端
+- **Framework**: React 18
+- **Build Tool**: Vite
+- **UI Library**: Ant Design
+- **Charts**: ECharts
+- **State Management**: Zustand
 
-#### 使用说明
+## 开发指南
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+### 后端启动
+```bash
+cd backend
+npm install
+npm run dev
+```
 
-#### 参与贡献
-
-1.  Fork 本仓库
-2.  新建 Feat_xxx 分支
-3.  提交代码
-4.  新建 Pull Request
-
-
-#### 特技
-
-1.  使用 Readme\_XXX.md 来支持不同的语言，例如 Readme\_en.md, Readme\_zh.md
-2.  Gitee 官方博客 [blog.gitee.com](https://blog.gitee.com)
-3.  你可以 [https://gitee.com/explore](https://gitee.com/explore) 这个地址来了解 Gitee 上的优秀开源项目
-4.  [GVP](https://gitee.com/gvp) 全称是 Gitee 最有价值开源项目，是综合评定出的优秀开源项目
-5.  Gitee 官方提供的使用手册 [https://gitee.com/help](https://gitee.com/help)
-6.  Gitee 封面人物是一档用来展示 Gitee 会员风采的栏目 [https://gitee.com/gitee-stars/](https://gitee.com/gitee-stars/)
+### 前端启动
+```bash
+cd frontend
+npm install
+npm run dev
+```
