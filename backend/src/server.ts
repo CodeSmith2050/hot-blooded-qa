@@ -1,22 +1,65 @@
+/**
+ * 服务器启动入口文件
+ * 
+ * 功能说明：
+ * - 初始化数据库连接
+ * - 启动HTTP服务器
+ * - 处理启动过程中的错误
+ */
+
 import app from './app';
 import { connectDatabase } from './config/database';
 
+// 服务器端口配置，优先使用环境变量，默认为3000
 const PORT = process.env.PORT || 3000;
 
-async function startServer() {
+/**
+ * 启动服务器的主函数
+ * 
+ * 执行流程：
+ * 1. 连接MongoDB数据库
+ * 2. 数据库连接成功后启动HTTP服务器
+ * 3. 监听指定端口
+ * 
+ * 错误处理：
+ * - 数据库连接失败：终止进程
+ * - 服务器启动失败：终止进程
+ */
+async function startServer(): Promise<void> {
   try {
-    // 连接数据库
+    // 步骤1：连接MongoDB数据库
+    // connectDatabase 会等待连接成功或抛出错误
     await connectDatabase();
     
-    // 启动服务器
+    // 步骤2：启动HTTP服务器并监听端口
     app.listen(PORT, () => {
-      console.log(`服务器运行在 http://localhost:${PORT}`);
-      console.log(`健康检查: http://localhost:${PORT}/health`);
+      console.log('╔════════════════════════════════════════════════════════╗');
+      console.log('║           热血问答 - 后端服务启动成功                   ║');
+      console.log('╠════════════════════════════════════════════════════════╣');
+      console.log(`║  服务地址:  http://localhost:${PORT}                        ║`);
+      console.log(`║  健康检查:  http://localhost:${PORT}/health               ║`);
+      console.log(`║  API接口:  http://localhost:${PORT}/api                  ║`);
+      console.log('╚════════════════════════════════════════════════════════╝');
+      console.log('');
+      console.log('提示：按 Ctrl+C 可停止服务');
     });
+
   } catch (error) {
-    console.error('服务器启动失败:', error);
+    // 数据库连接失败或服务器启动失败
+    console.error('╔════════════════════════════════════════════════════════╗');
+    console.error('║              服务器启动失败                             ║');
+    console.error('╠════════════════════════════════════════════════════════╣');
+    console.error(`║  错误原因: ${(error as Error).message}       ║`);
+    console.error('║                                                        ║');
+    console.error('║  请检查：                                               ║');
+    console.error('║  1. MongoDB服务是否已启动                              ║');
+    console.error('║  2. .env文件中的MONGODB_URI是否正确                     ║');
+    console.error('╚════════════════════════════════════════════════════════╝');
+    
+    // 退出进程，退出码1表示异常退出
     process.exit(1);
   }
 }
 
+// 启动服务器
 startServer();
