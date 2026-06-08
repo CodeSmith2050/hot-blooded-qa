@@ -1,0 +1,156 @@
+/**
+ * 全局样式文件
+ * 
+ * 功能说明：
+ * - 重置浏览器默认样式
+ * - 设置全局字体和颜色
+ * - 配置响应式布局基础
+ */
+
+/* ==================== CSS 变量 ==================== */
+:root {
+  /* 主题色 */
+  --primary-color: #1890ff;
+  --primary-color-hover: #40a9ff;
+  --primary-color-active: #096dd9;
+  
+  /* 文字颜色 */
+  --text-color: rgba(0, 0, 0, 0.85);
+  --text-color-secondary: rgba(0, 0, 0, 0.45);
+  
+  /* 背景色 */
+  --bg-color: #f0f2f5;
+  --bg-color-white: #ffffff;
+  
+  /* 边框 */
+  --border-color: #d9d9d9;
+  --border-radius: 4px;
+  
+  /* 阴影 */
+  --box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  
+  /* 字体 */
+  --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 
+                 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 
+                 'Apple Color Emoji', 'Segoe UI Emoji';
+}
+
+/* ==================== 基础重置 ==================== */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--font-family);
+  color: var(--text-color);
+  background-color: var(--bg-color);
+  line-height: 1.5;
+}
+
+/* ==================== 链接样式 ==================== */
+a {
+  color: var(--primary-color);
+  text-decoration: none;
+  transition: color 0.3s;
+}
+
+a:hover {
+  color: var(--primary-color-hover);
+}
+
+/* ==================== 滚动条样式 ==================== */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* ==================== 移动端适配 ==================== */
+@media (max-width: 768px) {
+  html {
+    font-size: 14px;
+  }
+  
+  /* 隐藏桌面端专用元素 */
+  .desktop-only {
+    display: none !important;
+  }
+}
+
+/* 桌面端专用 */
+@media (min-width: 769px) {
+  .mobile-only {
+    display: none !important;
+  }
+}
+
+/* ==================== 工具类 ==================== */
+.text-center {
+  text-align: center;
+}
+
+.text-right {
+  text-align: right;
+}
+
+.full-width {
+  width: 100%;
+}
+
+.full-height {
+  height: 100%;
+}
+
+/* 弹性布局工具 */
+.flex {
+  display: flex;
+}
+
+.flex-column {
+  display: flex;
+  flex-direction: column;
+}
+
+.flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* 间距工具 */
+.mt-8 { margin-top: 8px; }
+.mt-16 { margin-top: 16px; }
+.mt-24 { margin-top: 24px; }
+
+.mb-8 { margin-bottom: 8px; }
+.mb-16 { margin-bottom: 16px; }
+.mb-24 { margin-bottom: 24px; }
+
+.p-16 { padding: 16px; }
+.p-24 { padding: 24px; }

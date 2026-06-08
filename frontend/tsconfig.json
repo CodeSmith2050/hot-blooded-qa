@@ -1,0 +1,74 @@
+/**
+ * TypeScript 配置文件
+ * 
+ * 功能说明：
+ * - 配置 TypeScript 编译选项
+ * - 配置路径别名映射
+ * - 包含 Vite 类型声明
+ */
+
+{
+  "compilerOptions": {
+    // 目标 JavaScript 版本
+    "target": "ES2020",
+    
+    // 使用的库
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    
+    // 模块系统
+    "module": "ESNext",
+    
+    // 模块解析策略
+    "moduleResolution": "bundler",
+    
+    // 允许导入 JSON 文件
+    "resolveJsonModule": true,
+    
+    // 允许默认导入（与 CommonJS 模块兼容）
+    "allowSyntheticDefaultImports": true,
+    
+    // 强制一致的大小写（防止跨平台问题）
+    "forceConsistentCasingInFileNames": true,
+    
+    // 严格的类型检查
+    "strict": true,
+    
+    // 允许 JavaScript 文件
+    "allowJs": false,
+    
+    // 跳过库类型检查（提高编译速度）
+    "skipLibCheck": true,
+    
+    // 不输出文件（Vite 处理编译）
+    "noEmit": true,
+    
+    // JSX 转换方式
+    "jsx": "react-jsx",
+    
+    // 路径别名映射（与 vite.config.ts 一致）
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    },
+    
+    // 类型声明文件目录
+    "typeRoots": ["node_modules/@types", "src/types"]
+  },
+  
+  // 包含的文件
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx"
+  ],
+  
+  // 排除的文件
+  "exclude": [
+    "node_modules",
+    "dist"
+  ],
+  
+  // 引用 Vite 客户端类型
+  "references": [
+    { "path": "./tsconfig.node.json" }
+  ]
+}
