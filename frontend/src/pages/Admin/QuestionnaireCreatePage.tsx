@@ -4,16 +4,16 @@
  * 功能说明：
  * - 可视化问卷编辑器
  * - 支持多种题型（单选、多选、文本、评分、日期）
+ * - 题目拖拽排序
  * - 实时预览
  * - 保存草稿或直接发布
  * 
  * 页面布局：
- * - 左侧：题目列表（可拖拽排序）
- * - 右侧：题目编辑面板
  * - 顶部：问卷基本信息 + 操作按钮
+ * - 中部：题目列表（编辑/预览切换）
  */
 
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Form,
@@ -24,30 +24,109 @@ import {
   message,
   Tabs,
   Empty,
+  Switch,
+  Select,
+  InputNumber,
+  DatePicker,
+  Rate,
+  Checkbox,
   Radio,
+  Divider,
   Typography,
+  Tooltip,
 } from 'antd';
 import {
   PlusOutlined,
   SaveOutlined,
   SendOutlined,
   ArrowLeftOutlined,
+  DeleteOutlined,
+  HolderOutlined,
+  CopyOutlined,
+  EyeOutlined,
+  EditOutlined,
+  CheckCircleOutlined,
 } from '@ant-design/icons';
 import { questionnaireApi } from '@/services/api';
 
-const { Title } = Typography;
+const { Title, Text } = Typography;
 const { TextArea } = Input;
 
+// ==================== 题型配置 ====================
+
 /**
- * 问题类型选项
+ * 问题类型配置
+ * 包含类型名称、图标、默认配置
  */
-const questionTypes = [
-  { value: 'single_choice', label: '单选题' },
-  { value: 'multiple_choice', label: '多选题' },
-  { value: 'text', label: '文本题' },
-  { value: 'rating', label: '评分题' },
-  { value: 'date', label: '日期题' },
-];
+const questionTypeConfig: Record<string, {
+  label: string;
+  description: string;
+  defaultOptions?: { id: string; text: string; score: number }[];
+  defaultConfig?: {
+    placeholder?: string;
+    maxLength?: number;
+    maxRating?: number;
+  };
+}> = {
+  single_choice: {
+    label: '单选题',
+    description: '只有一个正确答案',
+    defaultOptions: [
+      { id: 'opt_1', text: '选项 A', score: 0 },
+      { id: 'opt_2', text: '选项 B', score: 0 },
+    ],
+  },
+  multiple_choice: {
+    label: '多选题',
+    description: '可以有多个答案',
+    defaultOptions: [
+      { id: 'opt_1', text: '选项 A', score: 0 },
+      { id: 'opt_2', text: '选项 B', score: 0 },
+      { id: 'opt_3', text: '选项 C', score: 0 },
+    ],
+  },
+  text: {
+    label: '文本题',
+    description: '自由输入文本答案',
+    defaultConfig: {
+      placeholder: '请输入您的回答',
+      maxLength: 500,
+    },
+  },
+  rating: {
+    label: '评分题',
+    description: '1-5星评分',
+    defaultConfig: {
+      maxRating: 5,
+    },
+  },
+  date: {
+    label: '日期题',
+    description: '选择日期',
+    defaultConfig: {},
+  },
+};
+
+// ==================== 题目接口 ====================
+
+interface QuestionOption {
+  id: string;
+  text: string;
+  score?: number;
+}
+
+interface Question {
+  id: string;
+  type: keyof typeof questionTypeConfig;
+  title: string;
+  required: boolean;
+  options?: QuestionOption[];
+  placeholder?: string;
+  maxLength?: number;
+  maxRating?: number;
+}
+
+// ==================== 主组件 ====================
 
 /**
  * 创建问卷页面
@@ -55,25 +134,45 @@ const questionTypes = [
 const QuestionnaireCreatePage: React.FC = () => {
   const navigate = useNavigate();
   const [form] = Form.useForm();
-  const [questions, setQuestions] = useState<any[]>([]);
+  const [questions, setQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('edit');
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  
+  // ==================== 题目操作方法 ====================
+  
+  /**
+   * 生成唯一ID
+   */
+  const generateId = () => `q_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   
   /**
    * 添加新题目
+   * @param type 题目类型
    */
-  const handleAddQuestion = () => {
-    const newQuestion = {
-      id: `q_${Date.now()}`,
-      type: 'single_choice',
+  const handleAddQuestion = (type: keyof typeof questionTypeConfig = 'single_choice') => {
+    const config = questionTypeConfig[type];
+    
+    const newQuestion: Question = {
+      id: generateId(),
+      type,
       title: '',
       required: true,
-      options: [
-        { id: `o_${Date.now()}_1`, text: '选项1' },
-        { id: `o_${Date.now()}_2`, text: '选项2' },
-      ],
+      ...(type === 'single_choice' || type === 'multiple_choice' 
+        ? { options: config.defaultOptions?.map((opt, i) => ({
+            ...opt,
+            id: `opt_${Date.now()}_${i}`,
+          })) }
+        : {}),
+      ...(type === 'text' ? { 
+        placeholder: config.defaultConfig?.placeholder,
+        maxLength: config.defaultConfig?.maxLength,
+      } : {}),
+      ...(type === 'rating' ? { maxRating: config.defaultConfig?.maxRating } : {}),
     };
+    
     setQuestions([...questions, newQuestion]);
+    message.success(`已添加 ${config.label}`);
   };
   
   /**
@@ -81,20 +180,145 @@ const QuestionnaireCreatePage: React.FC = () => {
    * @param index 题目索引
    * @param data 更新数据
    */
-  const handleUpdateQuestion = (index: number, data: any) => {
-    const updated = [...questions];
-    updated[index] = { ...updated[index], ...data };
-    setQuestions(updated);
-  };
+  const handleUpdateQuestion = useCallback((index: number, data: Partial<Question>) => {
+    setQuestions(prev => {
+      const updated = [...prev];
+      updated[index] = { ...updated[index], ...data };
+      return updated;
+    });
+  }, []);
   
   /**
    * 删除题目
    * @param index 题目索引
    */
   const handleDeleteQuestion = (index: number) => {
-    const updated = questions.filter((_, i) => i !== index);
+    setQuestions(prev => prev.filter((_, i) => i !== index));
+    message.success('题目已删除');
+  };
+  
+  /**
+   * 复制题目
+   * @param index 题目索引
+   */
+  const handleCopyQuestion = (index: number) => {
+    const question = questions[index];
+    const copied: Question = {
+      ...question,
+      id: generateId(),
+      title: question.title + '（副本）',
+      options: question.options?.map(opt => ({
+        ...opt,
+        id: `opt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      })),
+    };
+    setQuestions([...questions.slice(0, index + 1), copied, ...questions.slice(index + 1)]);
+    message.success('题目已复制');
+  };
+  
+  /**
+   * 移动题目（拖拽排序）
+   * @param fromIndex 原索引
+   * @param toIndex 目标索引
+   */
+  const handleMoveQuestion = (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex) return;
+    
+    const updated = [...questions];
+    const [moved] = updated.splice(fromIndex, 1);
+    updated.splice(toIndex, 0, moved);
     setQuestions(updated);
   };
+  
+  /**
+   * 添加选项（选择题）
+   * @param questionIndex 题目索引
+   */
+  const handleAddOption = (questionIndex: number) => {
+    const question = questions[questionIndex];
+    if (!question.options) return;
+    
+    const newOption: QuestionOption = {
+      id: `opt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      text: `选项 ${question.options.length + 1}`,
+      score: 0,
+    };
+    
+    handleUpdateQuestion(questionIndex, {
+      options: [...question.options, newOption],
+    });
+  };
+  
+  /**
+   * 更新选项
+   * @param questionIndex 题目索引
+   * @param optionIndex 选项索引
+   * @param text 选项文本
+   */
+  const handleUpdateOption = (questionIndex: number, optionIndex: number, text: string) => {
+    const question = questions[questionIndex];
+    if (!question.options) return;
+    
+    const updatedOptions = [...question.options];
+    updatedOptions[optionIndex] = { ...updatedOptions[optionIndex], text };
+    
+    handleUpdateQuestion(questionIndex, { options: updatedOptions });
+  };
+  
+  /**
+   * 删除选项
+   * @param questionIndex 题目索引
+   * @param optionIndex 选项索引
+   */
+  const handleDeleteOption = (questionIndex: number, optionIndex: number) => {
+    const question = questions[questionIndex];
+    if (!question.options || question.options.length <= 2) {
+      message.warning('选择题至少需要2个选项');
+      return;
+    }
+    
+    const updatedOptions = question.options.filter((_, i) => i !== optionIndex);
+    handleUpdateQuestion(questionIndex, { options: updatedOptions });
+  };
+  
+  // ==================== 拖拽处理 ====================
+  
+  /**
+   * 开始拖拽
+   */
+  const handleDragStart = (index: number) => {
+    setDragIndex(index);
+  };
+  
+  /**
+   * 拖拽经过
+   */
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (dragIndex !== null && dragIndex !== index) {
+      // 可选：添加视觉提示
+    }
+  };
+  
+  /**
+   * 拖拽放下
+   */
+  const handleDrop = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (dragIndex !== null) {
+      handleMoveQuestion(dragIndex, index);
+      setDragIndex(null);
+    }
+  };
+  
+  /**
+   * 拖拽结束
+   */
+  const handleDragEnd = () => {
+    setDragIndex(null);
+  };
+  
+  // ==================== 保存问卷 ====================
   
   /**
    * 保存问卷
@@ -102,9 +326,10 @@ const QuestionnaireCreatePage: React.FC = () => {
    */
   const handleSave = async (status: 'draft' | 'published') => {
     try {
+      // 验证基本信息
       const values = await form.validateFields();
       
-      // 验证题目
+      // 验证题目数量
       if (questions.length === 0) {
         message.error('请至少添加一道题目');
         return;
@@ -117,16 +342,33 @@ const QuestionnaireCreatePage: React.FC = () => {
         return;
       }
       
+      // 验证选择题选项
+      const choiceQuestions = questions.filter(
+        q => q.type === 'single_choice' || q.type === 'multiple_choice'
+      );
+      for (const q of choiceQuestions) {
+        const emptyOptions = q.options?.filter(opt => !opt.text.trim());
+        if (emptyOptions && emptyOptions.length > 0) {
+          message.error(`题目"${q.title}"存在空白选项，请填写完整`);
+          return;
+        }
+      }
+      
       setLoading(true);
       
+      // 构建提交数据
       const data = {
-        ...values,
+        title: values.title,
+        description: values.description || '',
         status,
         questions: questions.map((q) => ({
           type: q.type,
           title: q.title,
           required: q.required,
-          options: q.options,
+          ...(q.options ? { options: q.options } : {}),
+          ...(q.placeholder ? { placeholder: q.placeholder } : {}),
+          ...(q.maxLength ? { maxLength: q.maxLength } : {}),
+          ...(q.maxRating ? { maxRating: q.maxRating } : {}),
         })),
       };
       
@@ -135,15 +377,21 @@ const QuestionnaireCreatePage: React.FC = () => {
       if (response.success) {
         message.success(status === 'published' ? '问卷已发布' : '草稿已保存');
         navigate('/admin/list');
+      } else {
+        message.error(response.message || '保存失败');
       }
-    } catch (error) {
-      if (error instanceof Error) {
-        message.error(error.message);
+    } catch (error: any) {
+      if (error.errorFields) {
+        message.error('请填写问卷标题');
+      } else {
+        message.error('保存失败，请稍后重试');
       }
     } finally {
       setLoading(false);
     }
   };
+  
+  // ==================== 渲染 ====================
   
   return (
     <div>
@@ -195,7 +443,12 @@ const QuestionnaireCreatePage: React.FC = () => {
             label="问卷标题"
             rules={[{ required: true, message: '请输入问卷标题' }]}
           >
-            <Input placeholder="请输入问卷标题" maxLength={100} showCount />
+            <Input 
+              placeholder="例如：无偿献血人群满意度调查" 
+              maxLength={100} 
+              showCount 
+              size="large"
+            />
           </Form.Item>
           
           <Form.Item
@@ -203,7 +456,7 @@ const QuestionnaireCreatePage: React.FC = () => {
             label="问卷描述"
           >
             <TextArea
-              placeholder="请输入问卷描述（可选）"
+              placeholder="请输入问卷说明，帮助填写者了解问卷目的..."
               rows={3}
               maxLength={500}
               showCount
@@ -213,191 +466,448 @@ const QuestionnaireCreatePage: React.FC = () => {
       </Card>
       
       {/* 题目编辑区 */}
-      <Tabs activeKey={activeTab} onChange={setActiveTab}>
-        <Tabs.TabPane tab="编辑题目" key="edit">
-          {/* 添加题目按钮 */}
-          <Button
-            type="dashed"
-            icon={<PlusOutlined />}
-            onClick={handleAddQuestion}
-            block
-            style={{ marginBottom: 16 }}
-          >
-            添加题目
-          </Button>
-          
-          {/* 题目列表 */}
-          {questions.length === 0 ? (
-            <Empty description="点击上方按钮添加题目" />
-          ) : (
-            <Space direction="vertical" style={{ width: '100%' }}>
-              {questions.map((question, index) => (
-                <QuestionEditor
-                  key={question.id}
-                  index={index}
-                  question={question}
-                  onUpdate={(data) => handleUpdateQuestion(index, data)}
-                  onDelete={() => handleDeleteQuestion(index)}
-                />
-              ))}
-            </Space>
-          )}
-        </Tabs.TabPane>
-        
-        <Tabs.TabPane tab="预览" key="preview">
-          <QuestionnairePreview
-            title={form.getFieldValue('title')}
-            description={form.getFieldValue('description')}
-            questions={questions}
-          />
-        </Tabs.TabPane>
-      </Tabs>
+      <Tabs 
+        activeKey={activeTab} 
+        onChange={setActiveTab}
+        items={[
+          {
+            key: 'edit',
+            label: <span><EditOutlined /> 编辑题目</span>,
+            children: (
+              <QuestionEditPanel
+                questions={questions}
+                onAddQuestion={handleAddQuestion}
+                onUpdateQuestion={handleUpdateQuestion}
+                onDeleteQuestion={handleDeleteQuestion}
+                onCopyQuestion={handleCopyQuestion}
+                onAddOption={handleAddOption}
+                onUpdateOption={handleUpdateOption}
+                onDeleteOption={handleDeleteOption}
+                onDragStart={handleDragStart}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+                onDragEnd={handleDragEnd}
+                dragIndex={dragIndex}
+              />
+            ),
+          },
+          {
+            key: 'preview',
+            label: <span><EyeOutlined /> 预览问卷</span>,
+            children: (
+              <QuestionPreviewPanel
+                title={form.getFieldValue('title')}
+                description={form.getFieldValue('description')}
+                questions={questions}
+              />
+            ),
+          },
+        ]}
+      />
     </div>
   );
 };
 
-/**
- * 题目编辑器组件
- */
-interface QuestionEditorProps {
-  index: number;
-  question: any;
-  onUpdate: (data: any) => void;
-  onDelete: () => void;
+// ==================== 题目编辑面板组件 ====================
+
+interface QuestionEditPanelProps {
+  questions: Question[];
+  onAddQuestion: (type?: keyof typeof questionTypeConfig) => void;
+  onUpdateQuestion: (index: number, data: Partial<Question>) => void;
+  onDeleteQuestion: (index: number) => void;
+  onCopyQuestion: (index: number) => void;
+  onAddOption: (questionIndex: number) => void;
+  onUpdateOption: (questionIndex: number, optionIndex: number, text: string) => void;
+  onDeleteOption: (questionIndex: number, optionIndex: number) => void;
+  onDragStart: (index: number) => void;
+  onDragOver: (e: React.DragEvent, index: number) => void;
+  onDrop: (e: React.DragEvent, index: number) => void;
+  onDragEnd: () => void;
+  dragIndex: number | null;
 }
 
-const QuestionEditor: React.FC<QuestionEditorProps> = ({
-  index,
-  question,
-  onUpdate,
-  onDelete,
+/**
+ * 题目编辑面板
+ */
+const QuestionEditPanel: React.FC<QuestionEditPanelProps> = ({
+  questions,
+  onAddQuestion,
+  onUpdateQuestion,
+  onDeleteQuestion,
+  onCopyQuestion,
+  onAddOption,
+  onUpdateOption,
+  onDeleteOption,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+  dragIndex,
 }) => {
   return (
+    <div>
+      {/* 添加题目按钮组 */}
+      <Card style={{ marginBottom: 16 }}>
+        <Text strong>添加题目：</Text>
+        <Divider style={{ margin: '12px 0' }} />
+        <Space wrap>
+          {Object.entries(questionTypeConfig).map(([type, config]) => (
+            <Button
+              key={type}
+              icon={<PlusOutlined />}
+              onClick={() => onAddQuestion(type as keyof typeof questionTypeConfig)}
+            >
+              {config.label}
+            </Button>
+          ))}
+        </Space>
+      </Card>
+      
+      {/* 题目列表 */}
+      {questions.length === 0 ? (
+        <Empty
+          description="暂无题目，请点击上方按钮添加"
+          style={{ padding: '60px 0' }}
+        />
+      ) : (
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          {questions.map((question, index) => (
+            <QuestionItem
+              key={question.id}
+              question={question}
+              index={index}
+              onUpdate={(data) => onUpdateQuestion(index, data)}
+              onDelete={() => onDeleteQuestion(index)}
+              onCopy={() => onCopyQuestion(index)}
+              onAddOption={() => onAddOption(index)}
+              onUpdateOption={(optIdx, text) => onUpdateOption(index, optIdx, text)}
+              onDeleteOption={(optIdx) => onDeleteOption(index, optIdx)}
+              onDragStart={() => onDragStart(index)}
+              onDragOver={(e) => onDragOver(e, index)}
+              onDrop={(e) => onDrop(e, index)}
+              onDragEnd={onDragEnd}
+              isDragging={dragIndex === index}
+              isDropTarget={dragIndex !== null && dragIndex !== index}
+            />
+          ))}
+        </Space>
+      )}
+    </div>
+  );
+};
+
+// ==================== 单个题目组件 ====================
+
+interface QuestionItemProps {
+  question: Question;
+  index: number;
+  onUpdate: (data: Partial<Question>) => void;
+  onDelete: () => void;
+  onCopy: () => void;
+  onAddOption: () => void;
+  onUpdateOption: (optionIndex: number, text: string) => void;
+  onDeleteOption: (optionIndex: number) => void;
+  onDragStart: () => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDrop: (e: React.DragEvent) => void;
+  onDragEnd: () => void;
+  isDragging: boolean;
+  isDropTarget: boolean;
+}
+
+/**
+ * 单个题目编辑卡片
+ */
+const QuestionItem: React.FC<QuestionItemProps> = ({
+  question,
+  index,
+  onUpdate,
+  onDelete,
+  onCopy,
+  onAddOption,
+  onUpdateOption,
+  onDeleteOption,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+  isDragging,
+  isDropTarget,
+}) => {
+  const config = questionTypeConfig[question.type];
+  
+  return (
     <Card
-      title={`题目 ${index + 1}`}
-      extra={
-        <Button type="text" danger onClick={onDelete}>
-          删除
-        </Button>
-      }
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
+      style={{
+        opacity: isDragging ? 0.5 : 1,
+        border: isDropTarget ? '2px dashed #1890ff' : undefined,
+        transition: 'all 0.2s',
+      }}
     >
-      <Space direction="vertical" style={{ width: '100%' }}>
-        {/* 题目类型 */}
-        <Radio.Group
-          value={question.type}
-          onChange={(e) => onUpdate({ type: e.target.value })}
-          options={questionTypes}
-          optionType="button"
-          buttonStyle="solid"
+      {/* 题目头部 */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          marginBottom: 16,
+        }}
+      >
+        {/* 拖拽手柄 */}
+        <HolderOutlined
+          style={{ cursor: 'grab', marginRight: 8, color: '#999' }}
         />
         
-        {/* 题目标题 */}
-        <Input
-          placeholder="请输入题目"
-          value={question.title}
-          onChange={(e) => onUpdate({ title: e.target.value })}
-        />
+        {/* 题号 */}
+        <Text strong style={{ marginRight: 8 }}>
+          Q{index + 1}
+        </Text>
         
-        {/* 选项编辑（选择题） */}
-        {(question.type === 'single_choice' || question.type === 'multiple_choice') && (
-          <Space direction="vertical" style={{ width: '100%' }}>
-            {question.options.map((option: any, optIndex: number) => (
-              <Space key={option.id}>
+        {/* 题型标签 */}
+        <Text type="secondary" style={{ marginRight: 16 }}>
+          [{config.label}]
+        </Text>
+        
+        {/* 必填开关 */}
+        <Space>
+          <Text type="secondary">必填</Text>
+          <Switch
+            checked={question.required}
+            onChange={(checked) => onUpdate({ required: checked })}
+            size="small"
+          />
+        </Space>
+        
+        {/* 操作按钮 */}
+        <div style={{ marginLeft: 'auto' }}>
+          <Space>
+            <Tooltip title="复制题目">
+              <Button
+                type="text"
+                icon={<CopyOutlined />}
+                onClick={onCopy}
+                size="small"
+              />
+            </Tooltip>
+            <Tooltip title="删除题目">
+              <Button
+                type="text"
+                danger
+                icon={<DeleteOutlined />}
+                onClick={onDelete}
+                size="small"
+              />
+            </Tooltip>
+          </Space>
+        </div>
+      </div>
+      
+      {/* 题目标题 */}
+      <Input
+        placeholder="请输入题目内容"
+        value={question.title}
+        onChange={(e) => onUpdate({ title: e.target.value })}
+        size="large"
+        style={{ marginBottom: 16 }}
+      />
+      
+      {/* 选项编辑（选择题） */}
+      {(question.type === 'single_choice' || question.type === 'multiple_choice') && (
+        <div>
+          <Text type="secondary" style={{ marginBottom: 8 }}>
+            选项列表：
+          </Text>
+          <Space direction="vertical" style={{ width: '100%' }} size="small">
+            {question.options?.map((option, optIndex) => (
+              <div
+                key={option.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                }}
+              >
+                {/* 选项标记 */}
+                <Text>{String.fromCharCode(65 + optIndex)}.</Text>
+                
+                {/* 选项输入 */}
                 <Input
-                  placeholder={`选项 ${optIndex + 1}`}
+                  placeholder={`选项 ${String.fromCharCode(65 + optIndex)}`}
                   value={option.text}
-                  onChange={(e) => {
-                    const newOptions = [...question.options];
-                    newOptions[optIndex] = { ...option, text: e.target.value };
-                    onUpdate({ options: newOptions });
-                  }}
+                  onChange={(e) => onUpdateOption(optIndex, e.target.value)}
+                  style={{ flex: 1 }}
                 />
-                <Button
-                  type="text"
-                  danger
-                  onClick={() => {
-                    const newOptions = question.options.filter(
-                      (_: any, i: number) => i !== optIndex
-                    );
-                    onUpdate({ options: newOptions });
-                  }}
-                >
-                  删除
-                </Button>
-              </Space>
+                
+                {/* 删除选项 */}
+                {question.options && question.options.length > 2 && (
+                  <Button
+                    type="text"
+                    danger
+                    icon={<DeleteOutlined />}
+                    onClick={() => onDeleteOption(optIndex)}
+                    size="small"
+                  />
+                )}
+              </div>
             ))}
+            
+            {/* 添加选项按钮 */}
             <Button
               type="dashed"
-              onClick={() => {
-                const newOptions = [
-                  ...question.options,
-                  { id: `o_${Date.now()}`, text: `选项${question.options.length + 1}` },
-                ];
-                onUpdate({ options: newOptions });
-              }}
+              icon={<PlusOutlined />}
+              onClick={onAddOption}
+              block
+              style={{ marginTop: 8 }}
             >
               添加选项
             </Button>
           </Space>
-        )}
-      </Space>
+        </div>
+      )}
+      
+      {/* 文本题配置 */}
+      {question.type === 'text' && (
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Input
+            placeholder="输入提示文字（可选）"
+            value={question.placeholder}
+            onChange={(e) => onUpdate({ placeholder: e.target.value })}
+          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Text type="secondary">最大字数：</Text>
+            <InputNumber
+              min={10}
+              max={2000}
+              value={question.maxLength}
+              onChange={(value) => onUpdate({ maxLength: value || 500 })}
+            />
+          </div>
+        </Space>
+      )}
+      
+      {/* 评分题配置 */}
+      {question.type === 'rating' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Text type="secondary">最高评分：</Text>
+          <InputNumber
+            min={3}
+            max={10}
+            value={question.maxRating}
+            onChange={(value) => onUpdate({ maxRating: value || 5 })}
+          />
+          <Text type="secondary">星</Text>
+        </div>
+      )}
     </Card>
   );
 };
 
-/**
- * 问卷预览组件
- */
-interface QuestionnairePreviewProps {
-  title: string;
+// ==================== 预览面板组件 ====================
+
+interface QuestionPreviewPanelProps {
+  title?: string;
   description?: string;
-  questions: any[];
+  questions: Question[];
 }
 
-const QuestionnairePreview: React.FC<QuestionnairePreviewProps> = ({
+/**
+ * 问卷预览面板
+ */
+const QuestionPreviewPanel: React.FC<QuestionPreviewPanelProps> = ({
   title,
   description,
   questions,
 }) => {
   return (
     <Card>
-      <div style={{ textAlign: 'center', marginBottom: 24 }}>
-        <Title level={4}>{title || '问卷标题'}</Title>
-        {description && <p>{description}</p>}
+      {/* 问卷标题 */}
+      <div style={{ textAlign: 'center', marginBottom: 32 }}>
+        <Title level={3}>{title || '问卷标题'}</Title>
+        {description && (
+          <Text type="secondary" style={{ fontSize: 14 }}>
+            {description}
+          </Text>
+        )}
       </div>
       
-      {questions.map((question, index) => (
-        <div key={question.id} style={{ marginBottom: 16 }}>
-          <p>
-            {index + 1}. {question.title || '未命名题目'}
-            {question.required && <span style={{ color: 'red' }}> *</span>}
-          </p>
+      {/* 题目列表 */}
+      {questions.length === 0 ? (
+        <Empty description="暂无题目" />
+      ) : (
+        <Space direction="vertical" style={{ width: '100%' }} size="large">
+          {questions.map((question, index) => (
+            <div key={question.id}>
+              {/* 题目标题 */}
+              <div style={{ marginBottom: 12 }}>
+                <Text strong>
+                  {index + 1}. {question.title || '未命名题目'}
+                </Text>
+                {question.required && (
+                  <Text type="danger" style={{ marginLeft: 4 }}>*</Text>
+                )}
+              </div>
+              
+              {/* 题目内容 */}
+              {question.type === 'single_choice' && (
+                <Radio.Group disabled>
+                  <Space direction="vertical">
+                    {question.options?.map((option) => (
+                      <Radio key={option.id} value={option.id}>
+                        {option.text}
+                      </Radio>
+                    ))}
+                  </Space>
+                </Radio.Group>
+              )}
+              
+              {question.type === 'multiple_choice' && (
+                <Checkbox.Group disabled>
+                  <Space direction="vertical">
+                    {question.options?.map((option) => (
+                      <Checkbox key={option.id} value={option.id}>
+                        {option.text}
+                      </Checkbox>
+                    ))}
+                  </Space>
+                </Checkbox.Group>
+              )}
+              
+              {question.type === 'text' && (
+                <TextArea
+                  placeholder={question.placeholder || '请输入您的回答'}
+                  maxLength={question.maxLength}
+                  rows={4}
+                  disabled
+                  showCount
+                />
+              )}
+              
+              {question.type === 'rating' && (
+                <Rate count={question.maxRating || 5} disabled />
+              )}
+              
+              {question.type === 'date' && (
+                <DatePicker style={{ width: '100%' }} disabled />
+              )}
+            </div>
+          ))}
           
-          {question.type === 'single_choice' && (
-            <Radio.Group>
-              {question.options.map((option: any) => (
-                <Radio key={option.id} value={option.id}>
-                  {option.text}
-                </Radio>
-              ))}
-            </Radio.Group>
-          )}
-          
-          {question.type === 'multiple_choice' && (
-            <Space direction="vertical">
-              {question.options.map((option: any) => (
-                <Radio key={option.id} checked={false}>
-                  {option.text}
-                </Radio>
-              ))}
-            </Space>
-          )}
-          
-          {question.type === 'text' && (
-            <Input.TextArea placeholder="请输入您的回答" rows={3} disabled />
-          )}
-        </div>
-      ))}
+          {/* 提交按钮（预览） */}
+          <Divider />
+          <div style={{ textAlign: 'center' }}>
+            <Button type="primary" size="large" disabled>
+              <CheckCircleOutlined /> 提交问卷
+            </Button>
+            <Text type="secondary" style={{ marginLeft: 8 }}>
+              （预览模式）
+            </Text>
+          </div>
+        </Space>
+      )}
     </Card>
   );
 };

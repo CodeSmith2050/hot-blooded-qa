@@ -52,7 +52,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
           height: '100vh',
         }}
       >
-        <Spin size="large" tip="加载中..." />
+        <Spin size="large" />
       </div>
     );
   }

@@ -4,15 +4,16 @@
  * 功能说明：
  * - 展示问卷的统计数据
  * - 使用 ECharts 进行数据可视化
- * - 支持导出数据
+ * - 支持导出数据（CSV/Excel）
  * 
  * 展示内容：
- * - 总答卷数、完成率
- * - 各题目的统计图表
+ * - 总答卷数、完成率、平均用时
+ * - 各题目的统计图表（饼图、柱状图、折线图）
  * - 时间趋势分析
+ * - 答卷来源分布
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Card,
@@ -23,12 +24,78 @@ import {
   Button,
   message,
   Empty,
+  Typography,
+  Divider,
+  Space,
+  Table,
+  Tag,
+  DatePicker,
+  Select,
 } from 'antd';
 import {
   ArrowLeftOutlined,
   DownloadOutlined,
+  FileExcelOutlined,
+  FileTextOutlined,
+  UserOutlined,
+  ClockCircleOutlined,
+  CheckCircleOutlined,
 } from '@ant-design/icons';
-import { answerApi } from '@/services/api';
+import * as echarts from 'echarts';
+import { answerApi, questionnaireApi } from '@/services/api';
+
+const { Title, Text } = Typography;
+const { RangePicker } = DatePicker;
+
+// ==================== 统计数据接口 ====================
+
+interface StatisticsData {
+  questionnaire: {
+    title: string;
+    totalQuestions: number;
+    status: string;
+  };
+  overview: {
+    totalAnswers: number;
+    completedAnswers: number;
+    completionRate: number;
+    averageTime: number;
+  };
+  sourceDistribution: {
+    web: number;
+    wechat: number;
+    mobile: number;
+    other: number;
+  };
+  timeDistribution: {
+    dates: string[];
+    counts: number[];
+  };
+  questionStats: QuestionStat[];
+}
+
+interface QuestionStat {
+  questionIndex: number;
+  questionTitle: string;
+  questionType: string;
+  totalResponses: number;
+  options?: {
+    text: string;
+    count: number;
+    percentage: number;
+  }[];
+  textResponses?: {
+    content: string;
+    count: number;
+  }[];
+  averageRating?: number;
+  ratingDistribution?: {
+    rating: number;
+    count: number;
+  }[];
+}
+
+// ==================== 主组件 ====================
 
 /**
  * 统计页面
@@ -36,8 +103,19 @@ import { answerApi } from '@/services/api';
 const StatisticsPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  
+  // 状态管理
   const [loading, setLoading] = useState(true);
-  const [statistics, setStatistics] = useState<any>(null);
+  const [statistics, setStatistics] = useState<StatisticsData | null>(null);
+  const [timeRange, setTimeRange] = useState<[string, string] | null>(null);
+  
+  // 图表引用
+  const sourceChartRef = useRef<HTMLDivElement>(null);
+  const timeChartRef = useRef<HTMLDivElement>(null);
+  const sourceChartInstance = useRef<echarts.ECharts | null>(null);
+  const timeChartInstance = useRef<echarts.ECharts | null>(null);
+  
+  // ==================== 数据加载 ====================
   
   /**
    * 加载统计数据
@@ -47,9 +125,45 @@ const StatisticsPage: React.FC = () => {
       if (!id) return;
       
       try {
-        const response: any = await answerApi.getStatistics(id);
-        if (response.success) {
-          setStatistics(response.data);
+        setLoading(true);
+        
+        // 获取问卷基本信息
+        const questionnaireResponse: any = await questionnaireApi.getById(id);
+        
+        // 获取统计数据
+        const statsResponse: any = await answerApi.getStatistics(id);
+        
+        if (questionnaireResponse.success && statsResponse.success) {
+          const questionnaire = questionnaireResponse.data;
+          const stats = statsResponse.data;
+          
+          // 构建完整的统计数据
+          const fullStats: StatisticsData = {
+            questionnaire: {
+              title: questionnaire.title,
+              totalQuestions: questionnaire.questions?.length || 0,
+              status: questionnaire.status,
+            },
+            overview: {
+              totalAnswers: stats.totalAnswers || 0,
+              completedAnswers: stats.completedAnswers || 0,
+              completionRate: stats.completionRate || 0,
+              averageTime: stats.averageTime || 0,
+            },
+            sourceDistribution: stats.sourceDistribution || {
+              web: 0,
+              wechat: 0,
+              mobile: 0,
+              other: 0,
+            },
+            timeDistribution: stats.timeDistribution || {
+              dates: [],
+              counts: [],
+            },
+            questionStats: stats.questionStats || [],
+          };
+          
+          setStatistics(fullStats);
         }
       } catch (error) {
         message.error('加载统计数据失败');
@@ -61,43 +175,208 @@ const StatisticsPage: React.FC = () => {
     fetchStatistics();
   }, [id]);
   
+  // ==================== 图表渲染 ====================
+  
+  /**
+   * 渲染来源分布饼图
+   */
+  useEffect(() => {
+    if (!statistics || !sourceChartRef.current) return;
+    
+    // 初始化图表
+    if (!sourceChartInstance.current) {
+      sourceChartInstance.current = echarts.init(sourceChartRef.current);
+    }
+    
+    const { sourceDistribution } = statistics;
+    const total = sourceDistribution.web + sourceDistribution.wechat + 
+                  sourceDistribution.mobile + sourceDistribution.other;
+    
+    // 图表配置
+    const option: echarts.EChartsOption = {
+      title: {
+        text: '答卷来源分布',
+        left: 'center',
+        textStyle: { fontSize: 16, fontWeight: 'bold' },
+      },
+      tooltip: {
+        trigger: 'item',
+        formatter: '{b}: {c} ({d}%)',
+      },
+      legend: {
+        orient: 'vertical',
+        left: 'left',
+        top: 'middle',
+      },
+      series: [
+        {
+          type: 'pie',
+          radius: ['40%', '70%'],
+          center: ['60%', '50%'],
+          avoidLabelOverlap: false,
+          itemStyle: {
+            borderRadius: 10,
+            borderColor: '#fff',
+            borderWidth: 2,
+          },
+          label: {
+            show: false,
+            position: 'center',
+          },
+          emphasis: {
+            label: {
+              show: true,
+              fontSize: 20,
+              fontWeight: 'bold',
+            },
+          },
+          labelLine: { show: false },
+          data: [
+            { value: sourceDistribution.web, name: '网页端', itemStyle: { color: '#5470c6' } },
+            { value: sourceDistribution.wechat, name: '微信', itemStyle: { color: '#91cc75' } },
+            { value: sourceDistribution.mobile, name: '移动端', itemStyle: { color: '#fac858' } },
+            { value: sourceDistribution.other, name: '其他', itemStyle: { color: '#ee6666' } },
+          ],
+        },
+      ],
+    };
+    
+    sourceChartInstance.current.setOption(option);
+    
+    // 窗口大小变化时重新调整
+    const handleResize = () => sourceChartInstance.current?.resize();
+    window.addEventListener('resize', handleResize);
+    
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [statistics]);
+  
+  /**
+   * 渲染时间趋势折线图
+   */
+  useEffect(() => {
+    if (!statistics || !timeChartRef.current) return;
+    
+    // 初始化图表
+    if (!timeChartInstance.current) {
+      timeChartInstance.current = echarts.init(timeChartRef.current);
+    }
+    
+    const { timeDistribution } = statistics;
+    
+    // 图表配置
+    const option: echarts.EChartsOption = {
+      title: {
+        text: '答卷时间趋势',
+        left: 'center',
+        textStyle: { fontSize: 16, fontWeight: 'bold' },
+      },
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+      },
+      xAxis: {
+        type: 'category',
+        data: timeDistribution.dates,
+        axisLabel: { rotate: 45 },
+      },
+      yAxis: {
+        type: 'value',
+        name: '答卷数',
+      },
+      series: [
+        {
+          type: 'line',
+          data: timeDistribution.counts,
+          smooth: true,
+          symbol: 'circle',
+          symbolSize: 8,
+          lineStyle: { width: 3, color: '#1890ff' },
+          areaStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: 'rgba(24, 144, 255, 0.3)' },
+              { offset: 1, color: 'rgba(24, 144, 255, 0.05)' },
+            ]),
+          },
+          itemStyle: { color: '#1890ff' },
+        },
+      ],
+      grid: {
+        left: '10%',
+        right: '10%',
+        bottom: '15%',
+        top: '15%',
+      },
+    };
+    
+    timeChartInstance.current.setOption(option);
+    
+    // 窗口大小变化时重新调整
+    const handleResize = () => timeChartInstance.current?.resize();
+    window.addEventListener('resize', handleResize);
+    
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [statistics]);
+  
+  // ==================== 导出功能 ====================
+  
   /**
    * 导出数据
+   * @param format 导出格式（csv 或 excel）
    */
   const handleExport = async (format: 'csv' | 'excel') => {
     if (!id) return;
     
     try {
+      message.loading({ content: '正在导出...', key: 'export' });
+      
       const response: any = await answerApi.export(id, format);
       
       // 创建下载链接
-      const blob = new Blob([response], {
-        type: format === 'csv'
-          ? 'text/csv;charset=utf-8;'
-          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      });
+      const mimeType = format === 'csv'
+        ? 'text/csv;charset=utf-8;'
+        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      
+      const blob = new Blob([response], { type: mimeType });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
-      link.download = `问卷数据_${id}.${format}`;
+      link.download = `问卷数据_${id}.${format === 'csv' ? 'csv' : 'xlsx'}`;
       link.click();
+      URL.revokeObjectURL(link.href);
       
-      message.success('导出成功');
+      message.success({ content: '导出成功', key: 'export' });
     } catch (error) {
-      message.error('导出失败');
+      message.error({ content: '导出失败，请稍后重试', key: 'export' });
     }
   };
+  
+  // ==================== 加载中状态 ====================
   
   if (loading) {
     return (
       <div style={{ textAlign: 'center', padding: '100px 0' }}>
-        <Spin size="large" tip="加载中..." />
+        <Spin size="large" tip="加载统计数据..." />
       </div>
     );
   }
   
   if (!statistics) {
-    return <Empty description="暂无统计数据" />;
+    return (
+      <div style={{ padding: '50px 20px', textAlign: 'center' }}>
+        <Empty description="暂无统计数据" />
+        <div style={{ marginTop: 16 }}>
+          <Button type="primary" onClick={() => navigate('/admin/list')}>
+            返回列表
+          </Button>
+        </div>
+      </div>
+    );
   }
+  
+  // ==================== 渲染 ====================
   
   return (
     <div>
@@ -110,68 +389,325 @@ const StatisticsPage: React.FC = () => {
           marginBottom: 24,
         }}
       >
-        <Button
-          icon={<ArrowLeftOutlined />}
-          onClick={() => navigate('/admin/list')}
-        >
-          返回
-        </Button>
-        
-        <div>
+        <Space>
           <Button
-            icon={<DownloadOutlined />}
+            icon={<ArrowLeftOutlined />}
+            onClick={() => navigate('/admin/list')}
+          >
+            返回
+          </Button>
+          <Title level={3} style={{ margin: 0 }}>
+            {statistics.questionnaire.title} - 统计分析
+          </Title>
+          <Tag color={statistics.questionnaire.status === 'published' ? 'green' : 'orange'}>
+            {statistics.questionnaire.status === 'published' ? '已发布' : '草稿'}
+          </Tag>
+        </Space>
+        
+        <Space>
+          <Button
+            icon={<FileTextOutlined />}
             onClick={() => handleExport('csv')}
-            style={{ marginRight: 8 }}
           >
             导出 CSV
           </Button>
           <Button
-            icon={<DownloadOutlined />}
+            type="primary"
+            icon={<FileExcelOutlined />}
             onClick={() => handleExport('excel')}
           >
             导出 Excel
           </Button>
-        </div>
+        </Space>
       </div>
       
-      {/* 统计概览 */}
+      {/* 总览统计卡片 */}
       <Row gutter={16} style={{ marginBottom: 24 }}>
-        <Col span={8}>
+        <Col xs={12} sm={6}>
           <Card>
             <Statistic
               title="总答卷数"
-              value={statistics.totalAnswers || 0}
+              value={statistics.overview.totalAnswers}
+              prefix={<UserOutlined />}
+              valueStyle={{ color: '#1890ff' }}
             />
           </Card>
         </Col>
-        <Col span={8}>
+        <Col xs={12} sm={6}>
           <Card>
             <Statistic
-              title="今日答卷"
-              value={statistics.todayAnswers || 0}
+              title="完成答卷"
+              value={statistics.overview.completedAnswers}
+              prefix={<CheckCircleOutlined />}
+              valueStyle={{ color: '#52c41a' }}
             />
           </Card>
         </Col>
-        <Col span={8}>
+        <Col xs={12} sm={6}>
           <Card>
             <Statistic
               title="完成率"
-              value={statistics.completionRate || 0}
+              value={statistics.overview.completionRate}
               suffix="%"
+              precision={1}
+              valueStyle={{ color: '#722ed1' }}
+            />
+          </Card>
+        </Col>
+        <Col xs={12} sm={6}>
+          <Card>
+            <Statistic
+              title="平均用时"
+              value={statistics.overview.averageTime}
+              suffix="秒"
+              prefix={<ClockCircleOutlined />}
+              valueStyle={{ color: '#fa8c16' }}
             />
           </Card>
         </Col>
       </Row>
       
-      {/* 题目统计 */}
-      <h3>题目统计</h3>
-      {statistics.questionStats?.map((stat: any, index: number) => (
-        <Card key={index} title={stat.questionTitle} style={{ marginBottom: 16 }}>
-          {/* TODO: 使用 ECharts 渲染图表 */}
-          <pre>{JSON.stringify(stat, null, 2)}</pre>
-        </Card>
-      ))}
+      {/* 图表区域 */}
+      <Row gutter={16} style={{ marginBottom: 24 }}>
+        <Col xs={24} lg={12}>
+          <Card>
+            <div
+              ref={sourceChartRef}
+              style={{ width: '100%', height: 300 }}
+            />
+          </Card>
+        </Col>
+        <Col xs={24} lg={12}>
+          <Card>
+            <div
+              ref={timeChartRef}
+              style={{ width: '100%', height: 300 }}
+            />
+          </Card>
+        </Col>
+      </Row>
+      
+      {/* 各题目统计 */}
+      <Card title="题目统计分析" style={{ marginBottom: 24 }}>
+        {statistics.questionStats.length === 0 ? (
+          <Empty description="暂无题目统计数据" />
+        ) : (
+          statistics.questionStats.map((stat, index) => (
+            <QuestionStatCard
+              key={index}
+              stat={stat}
+              index={index}
+            />
+          ))
+        )}
+      </Card>
     </div>
+  );
+};
+
+// ==================== 单题统计卡片组件 ====================
+
+interface QuestionStatCardProps {
+  stat: QuestionStat;
+  index: number;
+}
+
+/**
+ * 单题统计卡片
+ * 包含题目统计图表和详细数据
+ */
+const QuestionStatCard: React.FC<QuestionStatCardProps> = ({ stat, index }) => {
+  const chartRef = useRef<HTMLDivElement>(null);
+  const chartInstance = useRef<echarts.ECharts | null>(null);
+  
+  /**
+   * 渲染题目图表
+   */
+  useEffect(() => {
+    if (!chartRef.current) return;
+    
+    // 初始化图表
+    if (!chartInstance.current) {
+      chartInstance.current = echarts.init(chartRef.current);
+    }
+    
+    let option: echarts.EChartsOption;
+    
+    // 根据题型选择图表类型
+    if (stat.questionType === 'single_choice' || stat.questionType === 'multiple_choice') {
+      // 选择题：柱状图
+      option = {
+        title: {
+          text: `Q${index + 1} ${stat.questionTitle}`,
+          left: 'left',
+          textStyle: { fontSize: 14 },
+        },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: { type: 'shadow' },
+          formatter: (params: any) => {
+            const data = params[0];
+            return `${data.name}: ${data.value} 人 (${stat.options?.find(o => o.text === data.name)?.percentage?.toFixed(1) || 0}%)`;
+          },
+        },
+        xAxis: {
+          type: 'category',
+          data: stat.options?.map(o => o.text) || [],
+          axisLabel: { interval: 0, rotate: 30 },
+        },
+        yAxis: {
+          type: 'value',
+          name: '选择人数',
+        },
+        series: [
+          {
+            type: 'bar',
+            data: stat.options?.map(o => o.count) || [],
+            itemStyle: {
+              color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                { offset: 0, color: '#1890ff' },
+                { offset: 1, color: '#69c0ff' },
+              ]),
+            },
+            barWidth: '60%',
+          },
+        ],
+        grid: {
+          left: '10%',
+          right: '10%',
+          bottom: '20%',
+          top: '15%',
+        },
+      };
+    } else if (stat.questionType === 'rating') {
+      // 评分题：饼图
+      option = {
+        title: {
+          text: `Q${index + 1} ${stat.questionTitle}`,
+          left: 'left',
+          textStyle: { fontSize: 14 },
+        },
+        tooltip: {
+          trigger: 'item',
+          formatter: '{b}星: {c} 人 ({d}%)',
+        },
+        legend: {
+          orient: 'horizontal',
+          bottom: 10,
+        },
+        series: [
+          {
+            type: 'pie',
+            radius: ['30%', '50%'],
+            center: ['50%', '45%'],
+            data: stat.ratingDistribution?.map(r => ({
+              value: r.count,
+              name: `${r.rating}`,
+            })) || [],
+            label: {
+              formatter: '{b}星\n{d}%',
+            },
+            itemStyle: {
+              borderRadius: 5,
+            },
+          },
+        ],
+      };
+    } else {
+      // 文本题：不显示图表，显示文字统计
+      return;
+    }
+    
+    chartInstance.current.setOption(option);
+    
+    // 窗口大小变化时重新调整
+    const handleResize = () => chartInstance.current?.resize();
+    window.addEventListener('resize', handleResize);
+    
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      chartInstance.current?.dispose();
+    };
+  }, [stat, index]);
+  
+  return (
+    <Card
+      style={{ marginBottom: 16 }}
+      size="small"
+    >
+      <Row gutter={16}>
+        {/* 图表区域 */}
+        {(stat.questionType === 'single_choice' || 
+          stat.questionType === 'multiple_choice' ||
+          stat.questionType === 'rating') && (
+          <Col xs={24} lg={12}>
+            <div
+              ref={chartRef}
+              style={{ width: '100%', height: 250 }}
+            />
+          </Col>
+        )}
+        
+        {/* 数据表格区域 */}
+        <Col xs={24} lg={12}>
+          <div style={{ padding: '10px 0' }}>
+            <Text strong style={{ marginBottom: 8 }}>
+              题型：{stat.questionType === 'single_choice' ? '单选题' :
+                     stat.questionType === 'multiple_choice' ? '多选题' :
+                     stat.questionType === 'rating' ? '评分题' :
+                     stat.questionType === 'text' ? '文本题' : '日期题'}
+            </Text>
+            <Divider style={{ margin: '8px 0' }} />
+            
+            {/* 选择题选项统计 */}
+            {stat.options && (
+              <Table
+                dataSource={stat.options.map((o, i) => ({
+                  key: i,
+                  option: o.text,
+                  count: o.count,
+                  percentage: `${o.percentage.toFixed(1)}%`,
+                }))}
+                columns={[
+                  { title: '选项', dataIndex: 'option', key: 'option' },
+                  { title: '选择人数', dataIndex: 'count', key: 'count' },
+                  { title: '占比', dataIndex: 'percentage', key: 'percentage' },
+                ]}
+                pagination={false}
+                size="small"
+              />
+            )}
+            
+            {/* 评分题统计 */}
+            {stat.questionType === 'rating' && stat.averageRating && (
+              <Statistic
+                title="平均评分"
+                value={stat.averageRating}
+                suffix="星"
+                precision={2}
+                valueStyle={{ color: '#fa8c16' }}
+              />
+            )}
+            
+            {/* 文本题统计 */}
+            {stat.questionType === 'text' && stat.textResponses && (
+              <div>
+                <Text type="secondary">共 {stat.totalResponses} 条回答</Text>
+                <Divider style={{ margin: '8px 0' }} />
+                <div style={{ maxHeight: 200, overflow: 'auto' }}>
+                  {stat.textResponses.slice(0, 10).map((r, i) => (
+                    <div key={i} style={{ marginBottom: 8 }}>
+                      <Text>{r.content}</Text>
+                      <Tag style={{ marginLeft: 8 }}>{r.count}次</Tag>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </Col>
+      </Row>
+    </Card>
   );
 };
 
