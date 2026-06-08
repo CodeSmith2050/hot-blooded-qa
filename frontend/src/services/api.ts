@@ -205,6 +205,25 @@ export const questionnaireApi = {
    */
   getStatistics: (id: string) =>
     apiClient.get(`/questionnaires/${id}/statistics`),
+  
+  /**
+   * 导入问卷
+   * @param data 问卷JSON数据
+   */
+  import: (data: {
+    title: string;
+    description?: string;
+    questions: Array<{
+      type: string;
+      title: string;
+      required?: boolean;
+      options?: Array<{ text: string; score?: number }>;
+      placeholder?: string;
+      maxLength?: number;
+      maxRating?: number;
+    }>;
+  }) =>
+    apiClient.post('/questionnaires/import', data),
 };
 
 // ==================== 答案相关 API ====================

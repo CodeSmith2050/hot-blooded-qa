@@ -7,6 +7,7 @@
  * - 题目拖拽排序
  * - 实时预览
  * - 保存草稿或直接发布
+ * - 导入JSON格式问卷
  * 
  * 页面布局：
  * - 顶部：问卷基本信息 + 操作按钮
@@ -46,8 +47,10 @@ import {
   EyeOutlined,
   EditOutlined,
   CheckCircleOutlined,
+  ImportOutlined,
 } from '@ant-design/icons';
 import { questionnaireApi } from '@/services/api';
+import QuestionnaireImportModal from '@/components/Admin/QuestionnaireImportModal';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -138,6 +141,7 @@ const QuestionnaireCreatePage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('edit');
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [importModalOpen, setImportModalOpen] = useState(false);
   
   // ==================== 题目操作方法 ====================
   
@@ -411,6 +415,12 @@ const QuestionnaireCreatePage: React.FC = () => {
           >
             返回
           </Button>
+          <Button
+            icon={<ImportOutlined />}
+            onClick={() => setImportModalOpen(true)}
+          >
+            导入问卷
+          </Button>
           <Title level={3} style={{ margin: 0 }}>
             创建问卷
           </Title>
@@ -503,6 +513,15 @@ const QuestionnaireCreatePage: React.FC = () => {
             ),
           },
         ]}
+      />
+      
+      {/* 导入弹窗 */}
+      <QuestionnaireImportModal
+        open={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onSuccess={() => {
+          message.success('导入成功，现在可以编辑问卷');
+        }}
       />
     </div>
   );

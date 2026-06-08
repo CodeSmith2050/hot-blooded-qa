@@ -7,6 +7,7 @@ import {
   deleteQuestionnaire,
   publishQuestionnaire,
   closeQuestionnaire,
+  importQuestionnaire,
 } from '../controllers/questionnaireController';
 import { authMiddleware } from '../middleware/auth';
 
@@ -19,6 +20,7 @@ router.get('/public/:id', getQuestionnaire);
 router.get('/', authMiddleware, getQuestionnaires);
 router.get('/:id', authMiddleware, getQuestionnaire);
 router.post('/', authMiddleware, createQuestionnaire);
+router.post('/import', authMiddleware, importQuestionnaire);
 router.put('/:id', authMiddleware, updateQuestionnaire);
 router.delete('/:id', authMiddleware, deleteQuestionnaire);
 router.post('/:id/publish', authMiddleware, publishQuestionnaire);
