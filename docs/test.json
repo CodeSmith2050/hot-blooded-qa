@@ -1,0 +1,54 @@
+{
+  "title": "示例问卷",
+  "description": "这是一个示例问卷",
+  "questions": [
+    {
+      "type": "single_choice",
+      "title": "您了解无偿献血吗？",
+      "required": true,
+      "options": [
+        {
+          "text": "非常了解",
+          "score": 5
+        },
+        {
+          "text": "了解一些",
+          "score": 3
+        },
+        {
+          "text": "不了解",
+          "score": 1
+        }
+      ]
+    },
+    {
+      "type": "multiple_choice",
+      "title": "您献血的动机是什么？",
+      "required": false,
+      "options": [
+        {
+          "text": "帮助他人",
+          "score": 5
+        },
+        {
+          "text": "免费体检",
+          "score": 3
+        },
+        {
+          "text": "社会荣誉",
+          "score": 3
+        },
+        {
+          "text": "其他",
+          "score": 1
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "title": "您对无偿献血有什么建议？",
+      "placeholder": "请输入您的建议...",
+      "maxLength": 500
+    }
+  ]
+}

@@ -268,4 +268,40 @@ export const answerApi = {
     }),
 };
 
+// ==================== 模板相关 API ====================
+
+/**
+ * 模板 API
+ * 处理问卷模板的获取和使用
+ */
+export const templateApi = {
+  /**
+   * 获取模板列表
+   * @param params 查询参数
+   */
+  getList: (params?: { category?: string }) =>
+    apiClient.get('/templates', { params }),
+  
+  /**
+   * 获取单个模板详情
+   * @param id 模板ID
+   */
+  getById: (id: string) =>
+    apiClient.get(`/templates/${id}`),
+  
+  /**
+   * 基于模板创建问卷
+   * @param id 模板ID
+   * @param data 自定义数据
+   */
+  createQuestionnaire: (id: string, data?: { title?: string; description?: string }) =>
+    apiClient.post(`/templates/${id}/create`, data || {}),
+  
+  /**
+   * 初始化预设模板（管理员）
+   */
+  init: () =>
+    apiClient.post('/templates/init'),
+};
+
 export default apiClient;

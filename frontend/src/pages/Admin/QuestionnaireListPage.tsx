@@ -35,9 +35,11 @@ import {
   BarChartOutlined,
   PlayCircleOutlined,
   StopOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons';
 import { questionnaireApi } from '@/services/api';
 import { useQuestionnaireStore } from '@/store/questionnaireStore';
+import TemplateSelectModal from '@/components/Admin/TemplateSelectModal';
 
 const { Title } = Typography;
 const { Option } = Select;
@@ -72,6 +74,7 @@ const QuestionnaireListPage: React.FC = () => {
   } = useQuestionnaireStore();
   
   const [localSearch, setLocalSearch] = useState(searchQuery);
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
   
   /**
    * 获取问卷列表
@@ -292,14 +295,24 @@ const QuestionnaireListPage: React.FC = () => {
         <Title level={3} style={{ margin: 0 }}>
           问卷列表
         </Title>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => navigate('/admin/create')}
-          size="large"
-        >
-          创建问卷
-        </Button>
+        <Space size="middle">
+          <Button
+            type="default"
+            icon={<FileTextOutlined />}
+            onClick={() => setShowTemplateModal(true)}
+            size="large"
+          >
+            从模板创建
+          </Button>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => navigate('/admin/create')}
+            size="large"
+          >
+            创建问卷
+          </Button>
+        </Space>
       </div>
       
       {/* 搜索和筛选 */}
@@ -348,6 +361,13 @@ const QuestionnaireListPage: React.FC = () => {
             setPagination({ page, limit: pageSize || 10 });
           },
         }}
+      />
+
+      {/* 模板选择弹窗 */}
+      <TemplateSelectModal
+        visible={showTemplateModal}
+        onClose={() => setShowTemplateModal(false)}
+        onSuccess={fetchQuestionnaires}
       />
     </div>
   );
