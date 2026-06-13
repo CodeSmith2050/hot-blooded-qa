@@ -32,6 +32,7 @@ import {
   Tooltip,
   Spin,
   Tag,
+  Modal,
 } from 'antd';
 import {
   SaveOutlined,
@@ -43,6 +44,9 @@ import {
   EditOutlined,
   CheckCircleOutlined,
   PlusOutlined,
+  ShareAltOutlined,
+  LinkOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons';
 import { questionnaireApi } from '@/services/api';
 
@@ -139,6 +143,10 @@ const QuestionnaireEditPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState('edit');
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [questionnaireStatus, setQuestionnaireStatus] = useState<string>('draft');
+  const [questionnaireTitle, setQuestionnaireTitle] = useState<string>('');
+  
+  // 分享弹窗状态
+  const [shareModalVisible, setShareModalVisible] = useState(false);
   
   // ==================== 数据加载 ====================
   
@@ -162,8 +170,9 @@ const QuestionnaireEditPage: React.FC = () => {
             description: data.description,
           });
           
-          // 设置问卷状态
+          // 设置问卷状态和标题
           setQuestionnaireStatus(data.status);
+          setQuestionnaireTitle(data.title);
           
           // 转换题目数据格式
           const convertedQuestions: Question[] = data.questions.map((q: any, index: number) => ({
@@ -450,6 +459,15 @@ const QuestionnaireEditPage: React.FC = () => {
           <Tag color={questionnaireStatus === 'published' ? 'green' : 'orange'}>
             {questionnaireStatus === 'published' ? '已发布' : '草稿'}
           </Tag>
+          {/* 已发布时显示分享按钮 */}
+          {questionnaireStatus === 'published' && (
+            <Button
+              icon={<ShareAltOutlined />}
+              onClick={() => setShareModalVisible(true)}
+            >
+              分享
+            </Button>
+          )}
         </Space>
         
         <Space>
@@ -533,7 +551,150 @@ const QuestionnaireEditPage: React.FC = () => {
           },
         ]}
       />
+      
+      {/* 分享弹窗 */}
+      <ShareModal
+        visible={shareModalVisible}
+        questionnaireId={id!}
+        questionnaireTitle={questionnaireTitle}
+        onClose={() => setShareModalVisible(false)}
+      />
     </div>
+  );
+};
+
+// ==================== 分享弹窗组件 ====================
+
+interface ShareModalProps {
+  visible: boolean;
+  questionnaireId: string;
+  questionnaireTitle: string;
+  onClose: () => void;
+}
+
+/**
+ * 分享弹窗组件
+ * 展示问卷链接和二维码
+ */
+const ShareModal: React.FC<ShareModalProps> = ({
+  visible,
+  questionnaireId,
+  questionnaireTitle,
+  onClose,
+}) => {
+  const [copied, setCopied] = useState(false);
+  
+  // 获取公共访问地址
+  const getPublicBaseUrl = () => {
+    return import.meta.env.VITE_PUBLIC_URL || window.location.origin;
+  };
+  
+  // 生成问卷填写链接
+  const getQuestionnaireUrl = () => {
+    const baseUrl = getPublicBaseUrl();
+    return `${baseUrl}/fill/${questionnaireId}`;
+  };
+  
+  // 二维码API地址
+  const getQrCodeUrl = () => {
+    const url = getQuestionnaireUrl();
+    return `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(url)}`;
+  };
+  
+  // 复制链接
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(getQuestionnaireUrl());
+      setCopied(true);
+      message.success('链接已复制到剪贴板');
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      message.error('复制失败，请手动复制');
+    }
+  };
+  
+  // 下载二维码
+  const handleDownloadQr = () => {
+    const link = document.createElement('a');
+    link.href = getQrCodeUrl();
+    link.download = `问卷_${questionnaireTitle || 'qrcode'}.png`;
+    link.click();
+  };
+  
+  return (
+    <Modal
+      title={
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <ShareAltOutlined style={{ color: '#1890ff' }} />
+          <span>分享问卷</span>
+        </div>
+      }
+      open={visible}
+      onCancel={onClose}
+      footer={null}
+      width={480}
+      destroyOnClose
+    >
+      <div style={{ textAlign: 'center', padding: '16px 0' }}>
+        {/* 问卷标题 */}
+        <Title level={4} style={{ marginBottom: 16 }}>
+          {questionnaireTitle || '问卷'}
+        </Title>
+        
+        {/* 二维码 */}
+        <div
+          style={{
+            display: 'inline-block',
+            padding: 16,
+            background: '#fff',
+            borderRadius: 8,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+            marginBottom: 24,
+          }}
+        >
+          <img
+            src={getQrCodeUrl()}
+            alt="二维码"
+            style={{ width: 200, height: 200, display: 'block' }}
+          />
+        </div>
+        
+        {/* 链接输入框 */}
+        <div style={{ marginBottom: 16 }}>
+          <Input.Group compact style={{ display: 'flex' }}>
+            <Input
+              value={getQuestionnaireUrl()}
+              readOnly
+              style={{ flex: 1 }}
+              prefix={<ShareAltOutlined />}
+            />
+            <Button
+              type="primary"
+              icon={copied ? <CheckCircleOutlined /> : <ShareAltOutlined />}
+              onClick={handleCopy}
+              style={copied ? { backgroundColor: '#52c41a', borderColor: '#52c41a' } : {}}
+            >
+              {copied ? '已复制' : '复制链接'}
+            </Button>
+          </Input.Group>
+        </div>
+        
+        {/* 操作按钮 */}
+        <Space size="middle">
+          <Button icon={<ShareAltOutlined />} onClick={handleCopy}>
+            复制链接
+          </Button>
+          <Button icon={<FileTextOutlined />} onClick={handleDownloadQr}>
+            下载二维码
+          </Button>
+        </Space>
+        
+        {/* 提示信息 */}
+        <div style={{ marginTop: 16, color: '#999', fontSize: 12 }}>
+          <p style={{ margin: 0 }}>扫描二维码或复制链接分享给用户填写问卷</p>
+        </div>
+      </div>
+    </Modal>
   );
 };
 

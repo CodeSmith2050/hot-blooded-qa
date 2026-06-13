@@ -16,7 +16,7 @@
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import {
   Card,
   Form,
@@ -40,6 +40,8 @@ import {
   CheckCircleOutlined,
   LeftOutlined,
   RightOutlined,
+  EyeOutlined,
+  ArrowLeftOutlined,
 } from '@ant-design/icons';
 import { questionnaireApi, answerApi } from '@/services/api';
 
@@ -75,7 +77,11 @@ const isWechat = (): boolean => {
  */
 const QuestionnaireFillPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
   const [form] = Form.useForm();
+  
+  // 预览模式：从URL参数获取
+  const isPreviewMode = searchParams.get('preview') === 'true';
   
   // 状态管理
   const [loading, setLoading] = useState(true);
@@ -121,8 +127,8 @@ const QuestionnaireFillPage: React.FC = () => {
         if (response.success && response.data) {
           const data = response.data;
           
-          // 检查问卷状态
-          if (data.status !== 'published') {
+          // 检查问卷状态（预览模式跳过状态检查）
+          if (!isPreviewMode && data.status !== 'published') {
             message.warning('问卷尚未发布或已关闭');
             return;
           }
@@ -144,7 +150,7 @@ const QuestionnaireFillPage: React.FC = () => {
     };
     
     fetchQuestionnaire();
-  }, [id, deviceType]);
+  }, [id, deviceType, isPreviewMode]);
   
   // ==================== 表单操作 ====================
   
@@ -319,8 +325,37 @@ const QuestionnaireFillPage: React.FC = () => {
       padding: deviceType === 'mobile' ? '16px' : '24px',
       backgroundColor: '#f5f5f5',
     }}>
+      {/* 预览模式提示 */}
+      {isPreviewMode && (
+        <div style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          gap: 16,
+          marginBottom: 16,
+          padding: '8px 16px',
+          backgroundColor: '#faad14',
+          color: '#fff',
+          borderRadius: 4,
+        }}>
+          <div>
+            <EyeOutlined style={{ marginRight: 8 }} />
+            <Text style={{ color: '#fff' }}>预览模式 - 仅展示问卷效果，不可提交</Text>
+          </div>
+          <Button
+            type="link"
+            size="small"
+            icon={<ArrowLeftOutlined />}
+            onClick={() => window.close()}
+            style={{ color: '#fff', padding: '4px 8px' }}
+          >
+            关闭预览
+          </Button>
+        </div>
+      )}
+      
       {/* 微信环境提示 */}
-      {isWechatEnv && (
+      {isWechatEnv && !isPreviewMode && (
         <div style={{
           textAlign: 'center',
           marginBottom: 16,
@@ -438,8 +473,8 @@ const QuestionnaireFillPage: React.FC = () => {
             </Button>
           )}
           
-          {/* 提交按钮 */}
-          {(!stepMode || currentStep === totalQuestions - 1) ? (
+          {/* 提交按钮（预览模式隐藏） */}
+          {!isPreviewMode && (!stepMode || currentStep === totalQuestions - 1) ? (
             <Button
               type="primary"
               size={deviceType === 'mobile' ? 'large' : 'middle'}
@@ -453,7 +488,19 @@ const QuestionnaireFillPage: React.FC = () => {
             >
               提交问卷
             </Button>
-          ) : (
+          ) : !isPreviewMode && (
+            <Button
+              type="primary"
+              size={deviceType === 'mobile' ? 'large' : 'middle'}
+              icon={<RightOutlined />}
+              onClick={handleNext}
+            >
+              下一题
+            </Button>
+          )}
+          
+          {/* 预览模式：只显示导航按钮 */}
+          {isPreviewMode && stepMode && currentStep < totalQuestions - 1 && (
             <Button
               type="primary"
               size={deviceType === 'mobile' ? 'large' : 'middle'}

@@ -45,7 +45,8 @@ export default defineConfig({
    */
   server: {
     port: 5173,           // 开发服务器端口
-    open: true,           // 自动打开浏览器
+    host: '0.0.0.0',      // 允许外部设备访问
+    open: false,          // 不自动打开浏览器
     
     /**
      * 代理配置

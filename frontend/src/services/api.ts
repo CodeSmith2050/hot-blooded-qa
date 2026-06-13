@@ -190,14 +190,14 @@ export const questionnaireApi = {
    * @param id 问卷ID
    */
   publish: (id: string) =>
-    apiClient.patch(`/questionnaires/${id}/publish`),
+    apiClient.post(`/questionnaires/${id}/publish`),
   
   /**
    * 关闭问卷
    * @param id 问卷ID
    */
   close: (id: string) =>
-    apiClient.patch(`/questionnaires/${id}/close`),
+    apiClient.post(`/questionnaires/${id}/close`),
   
   /**
    * 获取问卷统计

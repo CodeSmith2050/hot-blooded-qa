@@ -1,0 +1,39 @@
+# 生产环境 Docker Compose 配置
+# 使用方式: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  frontend:
+    environment:
+      # 生产环境使用实际域名
+      VITE_PUBLIC_URL: https://survey.yourdomain.com
+      VITE_API_URL: /api
+
+  backend:
+    environment:
+      NODE_ENV: production
+      # 生产环境使用更强的安全配置
+      JWT_EXPIRES_IN: 7d
+      # 启用CORS生产配置
+      CORS_ORIGIN: https://survey.yourdomain.com
+
+  nginx:
+    volumes:
+      # 生产环境Nginx配置
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf
+      # SSL证书目录
+      - ./ssl:/etc/nginx/ssl
+    ports:
+      # 生产环境只开放80和443
+      - "80:80"
+      - "443:443"
+    # 生产环境移除端口映射，仅通过nginx访问
+    profiles:
+      - prod
+
+  # MongoDB配置保持不变
+  mongodb:
+    # 生产环境添加备份配置
+    volumes:
+      - ./data/mongo:/data/db
+      # 可选：添加定时备份
+      # - ./backup:/backup
