@@ -140,21 +140,16 @@
 ## 8. 已知缺陷与待修复清单
 
 > 所有未修复的 bug 统一记录在此，修复后删除。按优先级排序。
+>
+> **当前状态**：清单为空，所有已发现 bug 均已修复。
 
-### BUG-001：答案统计接口路由顺序错误（高优先级）
+### 已修复历史（仅供追溯，不计入待修复清单）
 
-- **发现时间**：2026-07-16
-- **功能归属**：D-003 基础统计（功能列表标记为 🟡 部分完成）
-- **所属模块**：[backend/src/routes/answer.ts](../../backend/src/routes/answer.ts)
-- **现象**：`GET /api/answers/statistics/:questionnaireId` 始终返回 404
-- **根因**：路由定义顺序错误。`/:questionnaireId/:answerId` 定义在 `/statistics/:questionnaireId` 之前，Express 按顺序匹配时将 `statistics` 当作 questionnaireId 参数，将真正的 id 当作 answerId，路由到 `getAnswerDetail` 而非 `getStatistics`。
-- **影响范围**：
-  - 后端：`answerController.getStatistics` 完全不可达
-  - 前端：[StatisticsPage.tsx](../../frontend/src/pages/Admin/StatisticsPage.tsx) 统计数据加载失败
-  - 测试：`answer.test.ts` 中 2 个统计相关用例失败（非 skip，必须以失败状态存在）
-- **修复方案**：将 `/statistics/:questionnaireId` 路由定义移至 `/:questionnaireId` 与 `/:questionnaireId/:answerId` 之前
-- **修复分支**：`bugfix/fix-001-statistics-route-0717`（待创建）
-- **修复状态**：未修复（需用户确认后创建独立分支修复）
+- **BUG-001**（已修复，2026-07-17）：答案统计接口路由顺序错误
+  - 修复分支：`bugfix/fix-001-statistics-route-0717`
+  - 修复提交：`008f899 fix(answers): 修复统计接口路由顺序错误导致 404 (BUG-001)`
+  - 修复内容：将 `/statistics/:questionnaireId` 路由移至 `/:questionnaireId` 与 `/:questionnaireId/:answerId` 之前
+  - 验证结果：66 个单元测试全部通过，answerController 覆盖率从 61.01% 提升至 83.05%
 
 ---
 
@@ -165,3 +160,4 @@
 | 2026-07-16 | 初版项目记忆创建，记录功能核对结论、PRD 差异、优先补齐项 |
 | 2026-07-17 | 新增单元测试失败处理铁律 + 已知缺陷清单；记录 BUG-001 统计接口路由顺序错误 |
 | 2026-07-17 | 新增 Bug 修复分支管理铁律；BUG-001 标注预期修复分支名 |
+| 2026-07-17 | 修复 BUG-001（分支 bugfix/fix-001-statistics-route-0717），从待修复清单移至已修复历史 |
