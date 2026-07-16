@@ -1,11 +1,12 @@
 /**
  * 答案模块 API 单元测试
  *
- * 测试范围（对应功能列表 D-001 ~ D-004, F-001）：
+ * 测试范围（对应功能列表 D-001 ~ D-005, F-001）：
  * - POST /api/answers/submit                        提交问卷答案（公开）
  * - GET  /api/answers/:questionnaireId              答案列表（分页）
  * - GET  /api/answers/:questionnaireId/:answerId    答案详情
  * - GET  /api/answers/statistics/:questionnaireId   统计数据
+ * - GET  /api/answers/:questionnaireId/export       导出答案数据（CSV/Excel）
  *
  * 关联 PRD：2.2.3 问卷填写模块、2.2.4 数据分析模块
  */
@@ -255,5 +256,139 @@ describe('答案模块 - GET /api/answers/statistics/:questionnaireId', () => {
     const qid = await createPublishedQuestionnaire();
     const res = await request(app).get(`/api/answers/statistics/${qid}`);
     expect(res.status).toBe(401);
+  });
+});
+
+// ==================== 导出数据测试 ====================
+
+describe('答案模块 - GET /api/answers/:questionnaireId/export', () => {
+  it('D-005 应成功导出 CSV 格式数据', async () => {
+    const qid = await createPublishedQuestionnaire();
+
+    // 提交 2 份答案
+    for (let i = 0; i < 2; i++) {
+      await request(app)
+        .post('/api/answers/submit')
+        .send({
+          questionnaireId: qid,
+          answers: buildTestAnswers(),
+          source: 'web',
+          device: 'desktop',
+          duration: 100 + i,
+        });
+    }
+
+    const res = await request(app)
+      .get(`/api/answers/${qid}/export`)
+      .query({ format: 'csv' })
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('text/csv');
+    expect(res.headers['content-disposition']).toContain('attachment');
+
+    // CSV 文本校验：含 UTF-8 BOM + 表头 + 数据行
+    const text = res.text;
+    expect(text.startsWith('\ufeff')).toBe(true);
+    // 表头应包含题目标题（去 BOM 后检查）
+    const noBom = text.replace(/^\ufeff/, '');
+    const lines = noBom.split('\n');
+    expect(lines.length).toBe(3); // 1 表头 + 2 数据行
+    // 表头含基础列与题目列
+    expect(lines[0]).toContain('提交时间');
+    expect(lines[0]).toContain('来源');
+    expect(lines[0]).toContain('Q1.');
+  });
+
+  it('D-005 应成功导出 Excel 格式数据', async () => {
+    const qid = await createPublishedQuestionnaire();
+    await request(app)
+      .post('/api/answers/submit')
+      .send({ questionnaireId: qid, answers: buildTestAnswers() });
+
+    const res = await request(app)
+      .get(`/api/answers/${qid}/export`)
+      .query({ format: 'excel' })
+      .set(authHeader(token))
+      .buffer(true)
+      .parse((response, callback) => {
+        // 直接收集二进制 Buffer
+        const data: Buffer[] = [];
+        response.on('data', chunk => data.push(chunk));
+        response.on('end', () => callback(null, Buffer.concat(data)));
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain(
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    // Excel xlsx 文件以 PK 开头（zip 格式）
+    const buf = res.body as Buffer;
+    expect(buf.length).toBeGreaterThan(0);
+    expect(buf.slice(0, 2).toString('ascii')).toBe('PK');
+  });
+
+  it('D-005 未指定 format 时应默认导出 CSV', async () => {
+    const qid = await createPublishedQuestionnaire();
+    await request(app)
+      .post('/api/answers/submit')
+      .send({ questionnaireId: qid, answers: buildTestAnswers() });
+
+    const res = await request(app)
+      .get(`/api/answers/${qid}/export`)
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('text/csv');
+  });
+
+  it('D-005 无答案问卷应只返回表头行', async () => {
+    const qid = await createPublishedQuestionnaire();
+
+    const res = await request(app)
+      .get(`/api/answers/${qid}/export`)
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    const noBom = res.text.replace(/^\ufeff/, '');
+    const lines = noBom.split('\n');
+    expect(lines.length).toBe(1); // 仅表头
+  });
+
+  it('D-005 不存在的问卷应返回 404', async () => {
+    const res = await request(app)
+      .get('/api/answers/507f1f77bcf86cd799439011/export')
+      .set(authHeader(token));
+
+    expect(res.status).toBe(404);
+  });
+
+  it('D-005 导出接口需登录认证', async () => {
+    const qid = await createPublishedQuestionnaire();
+    const res = await request(app).get(`/api/answers/${qid}/export`);
+    expect(res.status).toBe(401);
+  });
+
+  it('D-005 CSV 多选题答案应用 "|" 分隔', async () => {
+    const qid = await createPublishedQuestionnaire();
+    // 多选题选 2 个选项，确保 "|" 分隔符出现
+    const multiAnswers = [
+      { questionId: 'q1', value: '男' },
+      { questionId: 'q2', value: ['帮助他人', '免费体检'] },
+      { questionId: 'q3', value: '服务很好' },
+      { questionId: 'q4', value: 5 },
+    ];
+    await request(app)
+      .post('/api/answers/submit')
+      .send({ questionnaireId: qid, answers: multiAnswers });
+
+    const res = await request(app)
+      .get(`/api/answers/${qid}/export`)
+      .query({ format: 'csv' })
+      .set(authHeader(token));
+
+    const noBom = res.text.replace(/^\ufeff/, '');
+    // 第二行（数据行）应包含多选题的 "|" 分隔符
+    expect(noBom.split('\n')[1]).toContain('|');
   });
 });

@@ -10,8 +10,9 @@
 
 import { Request, Response } from 'express';
 import mongoose from 'mongoose';
-import { Answer } from '../models/Answer';
-import { Questionnaire } from '../models/Questionnaire';
+import * as XLSX from 'xlsx';
+import { Answer, AnswerValue } from '../models/Answer';
+import { Questionnaire, IQuestion } from '../models/Questionnaire';
 
 /**
  * 提交问卷答案
@@ -308,4 +309,185 @@ export async function getStatistics(
         : undefined
     });
   }
+}
+
+/**
+ * 导出问卷答案数据
+ *
+ * 请求方法：GET
+ * 请求路径：/api/answers/:questionnaireId/export
+ * 查询参数：
+ *   - format: 导出格式，'csv' 或 'excel'，默认 'csv'
+ *
+ * 处理流程：
+ * 1. 验证问卷存在
+ * 2. 拉取全部答案
+ * 3. 以"题目标题"为表头，每份答案为一行
+ * 4. 按 format 返回 CSV 文本或 Excel 二进制流
+ *
+ * @param req - Express请求对象
+ * @param res - Express响应对象
+ */
+export async function exportAnswers(
+  req: Request,
+  res: Response
+): Promise<void> {
+  try {
+    const { questionnaireId } = req.params;
+    const format = (req.query.format as string) || 'csv';
+
+    // 1. 验证问卷
+    const questionnaire = await Questionnaire.findById(questionnaireId);
+
+    if (!questionnaire) {
+      res.status(404).json({
+        success: false,
+        message: '问卷不存在'
+      });
+      return;
+    }
+
+    // 2. 拉取全部答案（按提交时间升序，便于阅读）
+    const answers = await Answer.find({ questionnaireId })
+      .sort({ submittedAt: 1 });
+
+    // 3. 构造表头与数据行
+    const { headers, rows } = buildExportData(questionnaire.questions, answers);
+
+    // 4. 根据格式返回
+    if (format === 'excel') {
+      // Excel: 使用 xlsx 生成二进制 Buffer
+      const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Answers');
+
+      const buffer = XLSX.write(workbook, {
+        type: 'buffer',
+        bookType: 'xlsx'
+      }) as Buffer;
+
+      const filename = encodeURIComponent(`问卷数据_${questionnaire.title}.xlsx`);
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      );
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${filename}"`
+      );
+      res.send(buffer);
+      return;
+    }
+
+    // CSV: 文本输出，UTF-8 BOM 头确保 Excel 打开中文不乱码
+    const csvContent = [headers, ...rows]
+      .map(row => row.map(escapeCsvField).join(','))
+      .join('\n');
+
+    const filename = encodeURIComponent(`问卷数据_${questionnaire.title}.csv`);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${filename}"`
+    );
+    // BOM + 内容
+    res.send('\ufeff' + csvContent);
+
+  } catch (error) {
+    console.error('导出答案数据失败:', error);
+    res.status(500).json({
+      success: false,
+      message: '导出答案数据失败',
+      error: process.env.NODE_ENV === 'development'
+        ? (error as Error).message
+        : undefined
+    });
+  }
+}
+
+/**
+ * 构造导出数据：表头 + 每行一份答案
+ *
+ * 表头顺序：提交时间 | 来源 | 设备 | 填写时长(秒) | 题目1 | 题目2 | ...
+ * 题目列内容：按题型格式化
+ *   - 单选/文本/评分：直接字符串
+ *   - 多选：选项用 "|" 分隔
+ *   - 矩阵：行:列 选择用 ";" 分隔
+ *
+ * @param questions 问卷题目
+ * @param answers 答案列表
+ */
+function buildExportData(
+  questions: IQuestion[],
+  answers: { submittedAt: Date; source: string; device: string; duration: number; answers: AnswerValue[] }[]
+): { headers: string[]; rows: (string | number)[][] } {
+  // 基础列
+  const baseHeaders = ['提交时间', '来源', '设备', '填写时长(秒)'];
+  // 题目列：Q1. 题目标题
+  const questionHeaders = questions.map(
+    (q, i) => `Q${i + 1}. ${q.title}`
+  );
+  const headers = [...baseHeaders, ...questionHeaders];
+
+  const rows = answers.map(answer => {
+    // 基础信息
+    const row: (string | number)[] = [
+      new Date(answer.submittedAt).toISOString(),
+      answer.source,
+      answer.device,
+      answer.duration
+    ];
+
+    // 每道题的答案，按题目顺序对齐；无答案则留空
+    questions.forEach(q => {
+      const ans = answer.answers.find(a => a.questionId === q.id);
+      row.push(formatAnswerValue(ans?.value, q.type));
+    });
+
+    return row;
+  });
+
+  return { headers, rows };
+}
+
+/**
+ * 按题型格式化单个答案为可读字符串
+ *
+ * @param value 答案值
+ * @param questionType 题型
+ */
+function formatAnswerValue(
+  value: string | string[] | number | Record<string, string> | undefined,
+  questionType: string
+): string {
+  if (value === undefined || value === null || value === '') {
+    return '';
+  }
+
+  // 多选题：数组用 "|" 分隔
+  if (questionType === 'multiple' && Array.isArray(value)) {
+    return (value as string[]).join(' | ');
+  }
+
+  // 矩阵题：对象用 "行:列" 形式，多行用 ";" 分隔
+  if (questionType === 'matrix' && typeof value === 'object' && !Array.isArray(value)) {
+    return Object.entries(value as Record<string, string>)
+      .map(([row, col]) => `${row}:${col}`)
+      .join('; ');
+  }
+
+  // 其他题型（单选/文本/评分）：直接转字符串
+  return String(value);
+}
+
+/**
+ * CSV 字段转义：含逗号、引号、换行时用双引号包裹，内部双引号翻倍
+ */
+function escapeCsvField(value: string | number): string {
+  const str = String(value);
+  // 需要转义的字符：逗号、双引号、换行、回车
+  if (/[",\r\n]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
 }
