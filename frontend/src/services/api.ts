@@ -252,9 +252,12 @@ export const answerApi = {
   /**
    * 获取统计结果
    * @param questionnaireId 问卷ID
+   *
+   * 注意：后端实际路径为 /api/answers/statistics/:questionnaireId
+   * （静态段 statistics 必须置于参数路径前，详见 BUG-001）
    */
   getStatistics: (questionnaireId: string) =>
-    apiClient.get(`/answers/${questionnaireId}/statistics`),
+    apiClient.get(`/answers/statistics/${questionnaireId}`),
   
   /**
    * 导出答案数据

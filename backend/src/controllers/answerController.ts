@@ -219,18 +219,25 @@ export async function getAnswerDetail(
 
 /**
  * 获取问卷统计数据
- * 
+ *
  * 请求方法：GET
  * 请求路径：/api/answers/statistics/:questionnaireId
- * 
+ *
  * 统计数据包括：
  * - 总答案数
  * - 按来源分布
  * - 按设备类型分布
  * - 平均填写时长
- * 
- * 使用MongoDB聚合管道进行统计
- * 
+ * - 题目级统计分布（D-004）：
+ *   - 单选/多选：选项计数 + 百分比
+ *   - 文本：去重计数（按计数降序）
+ *   - 评分：平均分 + 评分分布
+ *   - 矩阵：每行×列计数（暂留空，待 E-002 矩阵题完整支持后再实现）
+ *
+ * 使用MongoDB聚合管道进行整体维度统计；
+ * 题目级分布通过内存聚合实现（题目数量有限，全量加载答案更高效，
+ * 且便于一次扫描完成所有题型的统计）。
+ *
  * @param req - Express请求对象
  * @param res - Express响应对象
  */
@@ -243,7 +250,7 @@ export async function getStatistics(
 
     // 1. 获取问卷信息
     const questionnaire = await Questionnaire.findById(questionnaireId);
-    
+
     if (!questionnaire) {
       res.status(404).json({
         success: false,
@@ -276,7 +283,11 @@ export async function getStatistics(
       // _id: null 表示所有文档作为一组
     ]);
 
-    // 6. 返回统计数据
+    // 6. 题目级统计分布（D-004）：拉取全部答案后内存聚合
+    const allAnswers = await Answer.find({ questionnaireId }).select('answers');
+    const questionStats = buildQuestionStats(questionnaire.questions, allAnswers);
+
+    // 7. 返回统计数据
     res.json({
       success: true,
       questionnaire: {
@@ -295,7 +306,8 @@ export async function getStatistics(
           device: s._id,
           count: s.count
         })),
-        avgDuration: Math.round(avgDurationResult[0]?.avgDuration || 0)
+        avgDuration: Math.round(avgDurationResult[0]?.avgDuration || 0),
+        questionStats
       }
     });
 
@@ -309,6 +321,108 @@ export async function getStatistics(
         : undefined
     });
   }
+}
+
+/**
+ * 题目级统计分布构造（D-004）
+ *
+ * 按题型分支聚合，返回前端 StatisticsPage 渲染所需的契约结构：
+ *   - 单选 single / 多选 multiple：options 列表 + 计数 + 百分比
+ *   - 文本 text：textResponses 去重列表（按计数降序）
+ *   - 评分 rating：averageRating + ratingDistribution（1~ratingMax 各档位计数）
+ *   - 矩阵 matrix：暂返回 totalResponses，分布待 E-002 矩阵题完整支持后补齐
+ *
+ * 说明：
+ *   - totalResponses = 该题已被作答（且非空）的答案数；多选题每份答案计 1 次
+ *   - 单选百分比基数 = totalResponses
+ *   - 多选百分比基数 = totalResponses（一份答案选 N 个选项，分母仍是答案数）
+ *   - 文本/评分不返回 options，仅返回相应字段
+ *
+ * @param questions 问卷题目定义（含选项、ratingMax 等）
+ * @param allAnswers 全部答案（仅需 answers 字段）
+ */
+function buildQuestionStats(
+  questions: IQuestion[],
+  allAnswers: { answers: AnswerValue[] }[]
+): any[] {
+  return questions.map((question, index) => {
+    // 提取该题全部作答值（跳过空值）
+    const values = allAnswers
+      .map(a => a.answers.find(av => av.questionId === question.id)?.value)
+      .filter(v => v !== undefined && v !== null && v !== '' &&
+        !(Array.isArray(v) && v.length === 0));
+
+    const totalResponses = values.length;
+    const base: any = {
+      questionIndex: index,
+      questionId: question.id,
+      questionTitle: question.title,
+      questionType: question.type,
+      totalResponses
+    };
+
+    if (question.type === 'single' || question.type === 'multiple') {
+      // 单选/多选：选项计数
+      const optionsCount = new Map<string, number>();
+      // 按问卷定义的选项顺序初始化，保证返回顺序稳定
+      (question.options || []).forEach(opt => optionsCount.set(opt, 0));
+
+      values.forEach(v => {
+        if (question.type === 'multiple' && Array.isArray(v)) {
+          (v as string[]).forEach(opt => {
+            optionsCount.set(opt, (optionsCount.get(opt) || 0) + 1);
+          });
+        } else {
+          const opt = String(v);
+          optionsCount.set(opt, (optionsCount.get(opt) || 0) + 1);
+        }
+      });
+
+      base.options = (question.options || []).map(opt => {
+        const count = optionsCount.get(opt) || 0;
+        return {
+          text: opt,
+          count,
+          // 百分比四舍五入到 1 位小数；分母为 0 时返回 0
+          percentage: totalResponses > 0
+            ? Math.round((count / totalResponses) * 1000) / 10
+            : 0
+        };
+      });
+    } else if (question.type === 'text') {
+      // 文本题：去重计数，按计数降序
+      const countMap = new Map<string, number>();
+      values.forEach(v => {
+        const text = String(v).trim();
+        if (!text) return;
+        countMap.set(text, (countMap.get(text) || 0) + 1);
+      });
+      base.textResponses = Array.from(countMap.entries())
+        .map(([content, count]) => ({ content, count }))
+        .sort((a, b) => b.count - a.count);
+    } else if (question.type === 'rating') {
+      // 评分题：平均分 + 评分分布
+      const numericValues = values
+        .map(v => Number(v))
+        .filter(n => !Number.isNaN(n));
+      const ratingMax = question.ratingMax || 5;
+      const sum = numericValues.reduce((acc, n) => acc + n, 0);
+      base.averageRating = numericValues.length > 0
+        ? Math.round((sum / numericValues.length) * 100) / 100
+        : 0;
+      const distribution: { rating: number; count: number }[] = [];
+      for (let r = 1; r <= ratingMax; r++) {
+        distribution.push({
+          rating: r,
+          count: numericValues.filter(n => n === r).length
+        });
+      }
+      base.ratingDistribution = distribution;
+    }
+    // matrix 类型：当前 totalResponses 已返回，分布待 E-002 完整支持后补齐
+
+    return base;
+  });
 }
 
 /**

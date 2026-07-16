@@ -5,7 +5,7 @@
  * - POST /api/answers/submit                        提交问卷答案（公开）
  * - GET  /api/answers/:questionnaireId              答案列表（分页）
  * - GET  /api/answers/:questionnaireId/:answerId    答案详情
- * - GET  /api/answers/statistics/:questionnaireId   统计数据
+ * - GET  /api/answers/statistics/:questionnaireId   统计数据（含 D-004 题目级分布）
  * - GET  /api/answers/:questionnaireId/export       导出答案数据（CSV/Excel）
  *
  * 关联 PRD：2.2.3 问卷填写模块、2.2.4 数据分析模块
@@ -256,6 +256,169 @@ describe('答案模块 - GET /api/answers/statistics/:questionnaireId', () => {
     const qid = await createPublishedQuestionnaire();
     const res = await request(app).get(`/api/answers/statistics/${qid}`);
     expect(res.status).toBe(401);
+  });
+
+  // ==================== D-004 题目级统计分布 ====================
+
+  it('D-004 应返回 questionStats 数组，长度等于问卷题目数', async () => {
+    const qid = await createPublishedQuestionnaire();
+    await request(app)
+      .post('/api/answers/submit')
+      .send({ questionnaireId: qid, answers: buildTestAnswers() });
+
+    const res = await request(app)
+      .get(`/api/answers/statistics/${qid}`)
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.statistics.questionStats)).toBe(true);
+    // buildTestQuestions 共 4 题
+    expect(res.body.statistics.questionStats).toHaveLength(4);
+  });
+
+  it('D-004 单选题应返回选项计数与百分比', async () => {
+    const qid = await createPublishedQuestionnaire();
+
+    // 提交 3 份答案：2 男 1 女
+    const maleAnswers = [
+      { questionId: 'q1', value: '男' },
+      { questionId: 'q2', value: [] },
+      { questionId: 'q3', value: '' },
+      { questionId: 'q4', value: 5 },
+    ];
+    const femaleAnswers = [
+      { questionId: 'q1', value: '女' },
+      { questionId: 'q2', value: [] },
+      { questionId: 'q3', value: '' },
+      { questionId: 'q4', value: 5 },
+    ];
+    await request(app).post('/api/answers/submit')
+      .send({ questionnaireId: qid, answers: maleAnswers });
+    await request(app).post('/api/answers/submit')
+      .send({ questionnaireId: qid, answers: maleAnswers });
+    await request(app).post('/api/answers/submit')
+      .send({ questionnaireId: qid, answers: femaleAnswers });
+
+    const res = await request(app)
+      .get(`/api/answers/statistics/${qid}`)
+      .set(authHeader(token));
+
+    const q1Stat = res.body.statistics.questionStats[0];
+    expect(q1Stat.questionType).toBe('single');
+    expect(q1Stat.totalResponses).toBe(3);
+    const maleOpt = q1Stat.options.find((o: any) => o.text === '男');
+    const femaleOpt = q1Stat.options.find((o: any) => o.text === '女');
+    expect(maleOpt.count).toBe(2);
+    expect(femaleOpt.count).toBe(1);
+    // 2/3 ≈ 66.7%
+    expect(maleOpt.percentage).toBeCloseTo(66.7, 1);
+  });
+
+  it('D-004 多选题应正确累加各选项计数', async () => {
+    const qid = await createPublishedQuestionnaire();
+
+    // 提交 2 份答案：
+    //   答案1: ['帮助他人', '免费体检']
+    //   答案2: ['帮助他人']
+    const answers1 = [
+      { questionId: 'q1', value: '男' },
+      { questionId: 'q2', value: ['帮助他人', '免费体检'] },
+      { questionId: 'q3', value: '' },
+      { questionId: 'q4', value: 5 },
+    ];
+    const answers2 = [
+      { questionId: 'q1', value: '男' },
+      { questionId: 'q2', value: ['帮助他人'] },
+      { questionId: 'q3', value: '' },
+      { questionId: 'q4', value: 5 },
+    ];
+    await request(app).post('/api/answers/submit').send({ questionnaireId: qid, answers: answers1 });
+    await request(app).post('/api/answers/submit').send({ questionnaireId: qid, answers: answers2 });
+
+    const res = await request(app)
+      .get(`/api/answers/statistics/${qid}`)
+      .set(authHeader(token));
+
+    const q2Stat = res.body.statistics.questionStats[1];
+    expect(q2Stat.questionType).toBe('multiple');
+    expect(q2Stat.totalResponses).toBe(2);
+    const opt1 = q2Stat.options.find((o: any) => o.text === '帮助他人');
+    const opt2 = q2Stat.options.find((o: any) => o.text === '免费体检');
+    expect(opt1.count).toBe(2);
+    expect(opt2.count).toBe(1);
+  });
+
+  it('D-004 文本题应返回去重后的响应列表（按计数降序）', async () => {
+    const qid = await createPublishedQuestionnaire();
+
+    // q3 文本题：3 份答案中"很好"出现 2 次，"一般"出现 1 次
+    const answers = (text: string) => [
+      { questionId: 'q1', value: '男' },
+      { questionId: 'q2', value: [] },
+      { questionId: 'q3', value: text },
+      { questionId: 'q4', value: 5 },
+    ];
+    await request(app).post('/api/answers/submit').send({ questionnaireId: qid, answers: answers('很好') });
+    await request(app).post('/api/answers/submit').send({ questionnaireId: qid, answers: answers('很好') });
+    await request(app).post('/api/answers/submit').send({ questionnaireId: qid, answers: answers('一般') });
+
+    const res = await request(app)
+      .get(`/api/answers/statistics/${qid}`)
+      .set(authHeader(token));
+
+    const q3Stat = res.body.statistics.questionStats[2];
+    expect(q3Stat.questionType).toBe('text');
+    expect(q3Stat.totalResponses).toBe(3);
+    expect(q3Stat.textResponses).toHaveLength(2);
+    // 降序：很好(2) → 一般(1)
+    expect(q3Stat.textResponses[0]).toEqual({ content: '很好', count: 2 });
+    expect(q3Stat.textResponses[1]).toEqual({ content: '一般', count: 1 });
+  });
+
+  it('D-004 评分题应返回平均分与评分分布', async () => {
+    const qid = await createPublishedQuestionnaire();
+
+    // q4 评分题（maxRating=5）：3 份答案 5/4/3，平均分 4.0
+    const answers = (rating: number) => [
+      { questionId: 'q1', value: '男' },
+      { questionId: 'q2', value: [] },
+      { questionId: 'q3', value: '' },
+      { questionId: 'q4', value: rating },
+    ];
+    await request(app).post('/api/answers/submit').send({ questionnaireId: qid, answers: answers(5) });
+    await request(app).post('/api/answers/submit').send({ questionnaireId: qid, answers: answers(4) });
+    await request(app).post('/api/answers/submit').send({ questionnaireId: qid, answers: answers(3) });
+
+    const res = await request(app)
+      .get(`/api/answers/statistics/${qid}`)
+      .set(authHeader(token));
+
+    const q4Stat = res.body.statistics.questionStats[3];
+    expect(q4Stat.questionType).toBe('rating');
+    expect(q4Stat.totalResponses).toBe(3);
+    expect(q4Stat.averageRating).toBe(4);
+    // 评分分布应为 1~5 共 5 档
+    expect(q4Stat.ratingDistribution).toHaveLength(5);
+    const rating3 = q4Stat.ratingDistribution.find((r: any) => r.rating === 3);
+    const rating4 = q4Stat.ratingDistribution.find((r: any) => r.rating === 4);
+    const rating5 = q4Stat.ratingDistribution.find((r: any) => r.rating === 5);
+    expect(rating3.count).toBe(1);
+    expect(rating4.count).toBe(1);
+    expect(rating5.count).toBe(1);
+  });
+
+  it('D-004 无答案问卷应返回 totalResponses 全为 0 的 questionStats', async () => {
+    const qid = await createPublishedQuestionnaire();
+
+    const res = await request(app)
+      .get(`/api/answers/statistics/${qid}`)
+      .set(authHeader(token));
+
+    const qs = res.body.statistics.questionStats;
+    expect(qs).toHaveLength(4);
+    qs.forEach((stat: any) => {
+      expect(stat.totalResponses).toBe(0);
+    });
   });
 });
 
