@@ -3,7 +3,7 @@
 > 本文件为 Trae 项目记忆，会被 IDE 自动加载，作为后续开发的上下文规则。
 > 详细功能进度请查阅 [docs/功能列表.md](../../docs/功能列表.md)。
 >
-> **最后更新**：2026-07-17（批次 3 F-006/S-005/S-004 完成）
+> **最后更新**：2026-07-17（批次 4 V-008 仪表盘 Dashboard 完成）
 
 ---
 
@@ -12,7 +12,7 @@
 - **项目名称**：热血问答 - 无偿献血人群问卷调研系统
 - **技术栈**：前端 React 18 + Vite + Ant Design 5 + ECharts + Zustand；后端 Node.js + Express + TypeScript + MongoDB (Mongoose 8)
 - **文档位置**：所有产品/方案/进度文档统一存放于 `docs/`，包括 [PRD.md](../../docs/PRD.md)、[可行性方案.md](../../docs/可行性方案.md)、[功能列表.md](../../docs/功能列表.md)
-- **当前总体进度**：约 81.4%（70 项功能中 55 完成、4 部分完成、11 未开始）
+- **当前总体进度**：约 82.9%（70 项功能中 56 完成、4 部分完成、10 未开始）
 
 ---
 
@@ -21,9 +21,9 @@
 | 里程碑 | 状态 | 说明 |
 |-------|------|------|
 | M1 需求/方案/DB设计 | ✅ | 已完成 |
-| M2 前端页面开发 | 🟡 85% | 题目级图表已完成；缺 Dashboard、词云/热力图等高级图表 |
-| M3 后端 API 开发 | 🟡 90% | 导出+题目级统计+防重复提交+限流+IP 脱敏已完成；缺仪表盘接口、完成率字段、角色权限接口、逻辑跳转、筛选 |
-| M4 测试通过 | 🟡 65% | 后端 API 测试 86 用例全通过；前端/E2E 待补 |
+| M2 前端页面开发 | 🟡 90% | Dashboard 已完成；缺词云/热力图等高级图表 |
+| M3 后端 API 开发 | 🟡 93% | 导出+题目级统计+防重复+限流+脱敏+仪表盘已完成；缺完成率字段、角色权限接口、逻辑跳转、筛选 |
+| M4 测试通过 | 🟡 68% | 后端 API 测试 96 用例全通过；前端/E2E 待补 |
 | M5 上线部署 | 🟡 | 部署配置已就绪，用户手册未交付 |
 
 ---
@@ -202,3 +202,4 @@
 | 2026-07-17 | 批次 1：D-005 数据导出功能（CSV/Excel）完成，新增 `GET /api/answers/:questionnaireId/export` 接口及 7 个测试用例，整体进度 75% → 76.4%，M3 75% → 80%，M4 0% → 55% |
 | 2026-07-17 | 批次 2：D-004 题目级统计分布 + V-004 题目级图表完成。后端 getStatistics 新增 questionStats 字段（按题型聚合：单选/多选选项计数+百分比、文本去重计数、评分平均分+分布），新增 6 个测试用例；前端修复 api.ts statistics 路径不一致 + fetchStatistics 字段映射 + QuestionStatCard 题型判断兼容 single/multiple。整体进度 76.4% → 77.9%，M2 80% → 85%，M3 80% → 85%，M4 55% → 60% |
 | 2026-07-17 | 批次 3：F-006 防重复提交 + S-005 限流 + S-004 IP 脱敏完成。新增 `middleware/rateLimit.ts` 内存固定窗口限流（5 次/分钟），submitAnswer 内 DEDUP_WINDOW_MS=10s 业务级防重复；Answer 模型新增 ipAddress 字段（脱敏末段置 0）+ 复合索引；新增 7 个 F-006/S-005/S-004 专项测试用例；BUG-002 同步修复（answer.test.ts 引入 submitAnswer 辅助函数分配唯一 IP）。整体进度 77.9% → 81.4%，M3 85% → 90%，M4 60% → 65% |
+| 2026-07-17 | 批次 4：V-008 仪表盘 Dashboard 完成。后端新增 `GET /api/answers/statistics/dashboard` 跨问卷聚合接口（getDashboard，6 个聚合管道：overview/trend/sourceStats/deviceStats/questionnaireStatusStats/topQuestionnaires，含近 7 天趋势补全 0 填充）；前端新增 `DashboardPage.tsx`（5 概览卡片 + 4 ECharts 图表 + Top 5 问卷 Table），App.tsx 新增 dashboard 路由并改为默认首页，AdminLayout 新增仪表盘菜单项（DashboardOutlined）；新增 10 个 V-008 测试用例。整体进度 81.4% → 82.9%，M2 85% → 90%，M3 90% → 93%，M4 65% → 68% |

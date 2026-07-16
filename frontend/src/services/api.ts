@@ -258,14 +258,24 @@ export const answerApi = {
    */
   getStatistics: (questionnaireId: string) =>
     apiClient.get(`/answers/statistics/${questionnaireId}`),
-  
+
+  /**
+   * 获取仪表盘数据（V-008）
+   *
+   * 跨问卷全局统计，返回管理员首页仪表盘所需的概览与分布数据。
+   * 后端路径：GET /api/answers/statistics/dashboard
+   * 注意：路由顺序上 /statistics/dashboard 必须在 /statistics/:questionnaireId 之前
+   */
+  getDashboard: () =>
+    apiClient.get('/answers/statistics/dashboard'),
+
   /**
    * 导出答案数据
    * @param questionnaireId 问卷ID
    * @param format 导出格式
    */
   export: (questionnaireId: string, format: 'csv' | 'excel' = 'csv') =>
-    apiClient.get(`/answers/${questionnaireId}/export`, { 
+    apiClient.get(`/answers/${questionnaireId}/export`, {
       params: { format },
       responseType: 'blob'  // 二进制响应（文件下载）
     }),

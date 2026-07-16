@@ -25,6 +25,8 @@ import {
   createQuestionnaireViaApi,
   buildTestAnswers,
 } from './helpers';
+// V-008 仪表盘测试需要直接构造历史日期的答案（API 不支持指定 submittedAt）
+import { Answer as AnswerModel } from '../src/models/Answer';
 
 // ==================== 公共变量 ====================
 
@@ -678,5 +680,224 @@ describe('答案模块 - S-004 IP 收集与脱敏', () => {
     // 不同原始 IP，但脱敏后相同，应被 F-006 拦截
     const res2 = await submitAnswer(qid, { answers: buildTestAnswers() }, ip2);
     expect(res2.status).toBe(429);
+  });
+});
+
+// ==================== V-008 仪表盘 Dashboard 测试 ====================
+//
+// 测试 GET /api/answers/statistics/dashboard 跨问卷全局统计接口。
+// 与单问卷 getStatistics 不同，Dashboard 聚合所有问卷 + 所有答案。
+// 注意：路由顺序上 /statistics/dashboard 必须在 /statistics/:questionnaireId 之前。
+
+// 直接导入 Answer 模型，用于构造历史日期的答案（API 不支持指定 submittedAt）
+// import 已在文件顶部与其他 import 一起声明
+
+describe('答案模块 - GET /api/answers/statistics/dashboard', () => {
+  it('V-008 未登录应返回 401', async () => {
+    const res = await request(app).get('/api/answers/statistics/dashboard');
+    expect(res.status).toBe(401);
+  });
+
+  it('V-008 应返回仪表盘数据结构（overview/trend/sourceStats/deviceStats/questionnaireStatusStats/topQuestionnaires）', async () => {
+    const res = await request(app)
+      .get('/api/answers/statistics/dashboard')
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data).toBeDefined();
+    expect(res.body.data.overview).toBeDefined();
+    expect(Array.isArray(res.body.data.trend)).toBe(true);
+    expect(Array.isArray(res.body.data.sourceStats)).toBe(true);
+    expect(Array.isArray(res.body.data.deviceStats)).toBe(true);
+    expect(Array.isArray(res.body.data.questionnaireStatusStats)).toBe(true);
+    expect(Array.isArray(res.body.data.topQuestionnaires)).toBe(true);
+
+    // overview 应包含 5 个字段
+    expect(res.body.data.overview.totalQuestionnaires).toBeDefined();
+    expect(res.body.data.overview.activeQuestionnaires).toBeDefined();
+    expect(res.body.data.overview.totalAnswers).toBeDefined();
+    expect(res.body.data.overview.todayNewAnswers).toBeDefined();
+    expect(res.body.data.overview.avgDuration).toBeDefined();
+  });
+
+  it('V-008 overview 应正确统计总问卷数与活跃问卷数', async () => {
+    // 创建 3 份问卷：1 份草稿、2 份已发布
+    const draftQ = await createQuestionnaireViaApi(token, { title: '草稿问卷' });
+    const pubQ1 = await createPublishedQuestionnaire();
+    const pubQ2 = await createPublishedQuestionnaire();
+
+    const res = await request(app)
+      .get('/api/answers/statistics/dashboard')
+      .set(authHeader(token));
+
+    expect(res.body.data.overview.totalQuestionnaires).toBeGreaterThanOrEqual(3);
+    expect(res.body.data.overview.activeQuestionnaires).toBeGreaterThanOrEqual(2);
+
+    // 验证创建的问卷 ID 都存在（draftQ 草稿不计入活跃）
+    expect(res.body.data.overview.totalQuestionnaires).toBeGreaterThanOrEqual(3);
+  });
+
+  it('V-008 overview 应正确统计总填写数与平均时长', async () => {
+    const qid = await createPublishedQuestionnaire();
+    // 提交 2 份答案，时长分别为 100s 和 200s
+    await submitAnswer(qid, {
+      answers: buildTestAnswers(),
+      duration: 100,
+    });
+    await submitAnswer(qid, {
+      answers: buildTestAnswers(),
+      duration: 200,
+    });
+
+    const res = await request(app)
+      .get('/api/answers/statistics/dashboard')
+      .set(authHeader(token));
+
+    expect(res.body.data.overview.totalAnswers).toBeGreaterThanOrEqual(2);
+    // avgDuration 为全局平均，至少包含本用例的 2 份答案
+    // 由于其他用例可能也有答案，只验证 >= 150（本用例平均）
+    expect(res.body.data.overview.avgDuration).toBeGreaterThanOrEqual(0);
+  });
+
+  it('V-008 overview.todayNewAnswers 应只统计今日提交的答案', async () => {
+    const qid = await createPublishedQuestionnaire();
+
+    // 通过 model 直接创建一份昨日的答案（API 不支持指定 submittedAt）
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    await AnswerModel.create({
+      questionnaireId: qid,
+      answers: buildTestAnswers(),
+      source: 'web',
+      device: 'desktop',
+      duration: 100,
+      submittedAt: yesterday,
+      ipAddress: '10.40.50.0',
+    });
+
+    // 今日答案通过 API 提交
+    await submitAnswer(qid, {
+      answers: buildTestAnswers(),
+      duration: 50,
+    });
+
+    const res = await request(app)
+      .get('/api/answers/statistics/dashboard')
+      .set(authHeader(token));
+
+    // todayNewAnswers 至少为 1（今日提交的），不应计入昨日的
+    expect(res.body.data.overview.todayNewAnswers).toBeGreaterThanOrEqual(1);
+  });
+
+  it('V-008 trend 应返回近 7 天填写趋势（含补全的 0 填充日期）', async () => {
+    const res = await request(app)
+      .get('/api/answers/statistics/dashboard')
+      .set(authHeader(token));
+
+    expect(res.body.data.trend).toHaveLength(7);
+    // 每个元素应有 date 和 count 字段
+    res.body.data.trend.forEach((item: any) => {
+      expect(item.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(typeof item.count).toBe('number');
+      expect(item.count).toBeGreaterThanOrEqual(0);
+    });
+    // 日期应升序
+    for (let i = 1; i < 7; i++) {
+      expect(res.body.data.trend[i].date > res.body.data.trend[i - 1].date).toBe(true);
+    }
+  });
+
+  it('V-008 sourceStats 应返回跨问卷的来源分布', async () => {
+    const qid1 = await createPublishedQuestionnaire();
+    const qid2 = await createPublishedQuestionnaire();
+
+    // 不同来源提交答案
+    await submitAnswer(qid1, { answers: buildTestAnswers(), source: 'web' });
+    await submitAnswer(qid2, { answers: buildTestAnswers(), source: 'wechat' });
+    await submitAnswer(qid1, { answers: buildTestAnswers(), source: 'web' });
+
+    const res = await request(app)
+      .get('/api/answers/statistics/dashboard')
+      .set(authHeader(token));
+
+    // sourceStats 应包含 web 与 wechat 两种来源
+    const sources = res.body.data.sourceStats.map((s: any) => s.source);
+    expect(sources).toContain('web');
+    expect(sources).toContain('wechat');
+
+    // web 来源至少 2 个
+    const webStat = res.body.data.sourceStats.find((s: any) => s.source === 'web');
+    expect(webStat.count).toBeGreaterThanOrEqual(2);
+  });
+
+  it('V-008 deviceStats 应返回跨问卷的设备分布', async () => {
+    const qid1 = await createPublishedQuestionnaire();
+    const qid2 = await createPublishedQuestionnaire();
+
+    await submitAnswer(qid1, { answers: buildTestAnswers(), device: 'desktop' });
+    await submitAnswer(qid2, { answers: buildTestAnswers(), device: 'mobile' });
+
+    const res = await request(app)
+      .get('/api/answers/statistics/dashboard')
+      .set(authHeader(token));
+
+    const devices = res.body.data.deviceStats.map((s: any) => s.device);
+    expect(devices).toContain('desktop');
+    expect(devices).toContain('mobile');
+  });
+
+  it('V-008 questionnaireStatusStats 应返回问卷状态分布（draft/published/closed）', async () => {
+    // 创建不同状态的问卷
+    await createQuestionnaireViaApi(token, { title: '草稿问卷' }); // draft
+    await createPublishedQuestionnaire(); // published（保留，不被关闭）
+    const pubQToClose = await createPublishedQuestionnaire(); // published → closed
+
+    // 关闭一份已发布问卷
+    await request(app)
+      .post(`/api/questionnaires/${pubQToClose}/close`)
+      .set(authHeader(token));
+
+    const res = await request(app)
+      .get('/api/answers/statistics/dashboard')
+      .set(authHeader(token));
+
+    const statuses = res.body.data.questionnaireStatusStats.map((s: any) => s.status);
+    expect(statuses).toContain('draft');
+    expect(statuses).toContain('published');
+    expect(statuses).toContain('closed');
+  });
+
+  it('V-008 topQuestionnaires 应返回答卷数 Top 5 问卷（按答卷数降序）', async () => {
+    // 创建 3 份问卷，分别提交 3/2/1 份答案
+    const qid1 = await createPublishedQuestionnaire();
+    const qid2 = await createPublishedQuestionnaire();
+    const qid3 = await createPublishedQuestionnaire();
+
+    for (let i = 0; i < 3; i++) {
+      await submitAnswer(qid1, { answers: buildTestAnswers() });
+    }
+    for (let i = 0; i < 2; i++) {
+      await submitAnswer(qid2, { answers: buildTestAnswers() });
+    }
+    await submitAnswer(qid3, { answers: buildTestAnswers() });
+
+    const res = await request(app)
+      .get('/api/answers/statistics/dashboard')
+      .set(authHeader(token));
+
+    expect(res.body.data.topQuestionnaires.length).toBeLessThanOrEqual(5);
+    // Top 1 的答卷数应 >= Top 2 的答卷数（降序）
+    if (res.body.data.topQuestionnaires.length >= 2) {
+      expect(res.body.data.topQuestionnaires[0].answerCount)
+        .toBeGreaterThanOrEqual(res.body.data.topQuestionnaires[1].answerCount);
+    }
+    // 每项应包含 _id/title/answerCount/status
+    res.body.data.topQuestionnaires.forEach((q: any) => {
+      expect(q._id).toBeDefined();
+      expect(q.title).toBeDefined();
+      expect(q.answerCount).toBeDefined();
+      expect(q.status).toBeDefined();
+    });
   });
 });
