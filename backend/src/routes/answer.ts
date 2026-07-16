@@ -4,6 +4,7 @@ import {
   getAnswers,
   getAnswerDetail,
   getStatistics,
+  getDashboard,
   exportAnswers,
 } from '../controllers/answerController';
 import { authMiddleware } from '../middleware/auth';
@@ -46,9 +47,11 @@ const submitLimiter = rateLimit({
 router.post('/submit', submitLimiter, submitAnswer);
 
 // 需要认证的路由
-// 注意：静态路径（如 /statistics、/:id/export）必须定义在参数路径
-// (/:questionnaireId、/:questionnaireId/:answerId) 之前，否则 Express 按顺序
+// 注意：静态路径（如 /statistics/dashboard、/statistics/:id、/:id/export）必须定义在
+// 参数路径 (/:questionnaireId、/:questionnaireId/:answerId) 之前，否则 Express 按顺序
 // 匹配时会将静态段误当作参数，导致路由不可达。详见 BUG-001。
+// 同一前缀下，更具体的静态路径（/statistics/dashboard）须在参数路径（/statistics/:questionnaireId）之前。
+router.get('/statistics/dashboard', authMiddleware, getDashboard);
 router.get('/statistics/:questionnaireId', authMiddleware, getStatistics);
 router.get('/:questionnaireId/export', authMiddleware, exportAnswers);
 router.get('/:questionnaireId', authMiddleware, getAnswers);

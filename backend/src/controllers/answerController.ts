@@ -409,6 +409,177 @@ export async function getStatistics(
 }
 
 /**
+ * 仪表盘数据（V-008）
+ *
+ * 请求方法：GET
+ * 请求路径：/api/answers/statistics/dashboard
+ *
+ * 跨问卷全局统计，返回管理员首页仪表盘所需的概览与分布数据。
+ * 与 getStatistics（单问卷）不同，此接口聚合所有问卷 + 所有答案。
+ *
+ * 返回结构：
+ *   {
+ *     success: true,
+ *     data: {
+ *       overview: {
+ *         totalQuestionnaires,    // 总问卷数
+ *         activeQuestionnaires,   // 活跃问卷数（status=published）
+ *         totalAnswers,           // 总填写数
+ *         todayNewAnswers,        // 今日新增填写数
+ *         avgDuration             // 平均填写时长（秒，四舍五入）
+ *       },
+ *       trend: [{ date: 'YYYY-MM-DD', count }],            // 近 7 天填写趋势
+ *       sourceStats: [{ source, count }],                  // 来源分布（跨所有答案）
+ *       deviceStats: [{ device, count }],                  // 设备分布（跨所有答案）
+ *       questionnaireStatusStats: [{ status, count }],     // 问卷状态分布
+ *       topQuestionnaires: [{ _id, title, answerCount, status }]  // 答卷数 Top 5
+ *     }
+ *   }
+ *
+ * 设计说明：
+ *   - 完成率字段（isCompleted）暂未实现（见 S-006），故 overview 不返回 avgCompletionRate
+ *   - 满意度分布需跨问卷聚合所有 rating 题型答案，逻辑复杂，留待 V-005 评分雷达图批次实现
+ *   - 所有聚合均使用 MongoDB aggregate 管道，单次请求执行 6 个聚合查询
+ *
+ * @param req - Express请求对象
+ * @param res - Express响应对象
+ */
+export async function getDashboard(
+  req: Request,
+  res: Response
+): Promise<void> {
+  try {
+    // 1. 概览：总问卷数、活跃问卷数、总填写数、今日新增、平均时长
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const [
+      totalQuestionnaires,
+      activeQuestionnaires,
+      totalAnswers,
+      todayNewAnswers,
+      avgDurationResult
+    ] = await Promise.all([
+      Questionnaire.countDocuments(),
+      Questionnaire.countDocuments({ status: 'published' }),
+      Answer.countDocuments(),
+      Answer.countDocuments({ submittedAt: { $gte: startOfToday } }),
+      Answer.aggregate([
+        { $group: { _id: null, avgDuration: { $avg: '$duration' } } }
+      ])
+    ]);
+
+    // 2. 近 7 天填写趋势：按日期分组
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+    sevenDaysAgo.setHours(0, 0, 0, 0);
+
+    const trendRaw = await Answer.aggregate([
+      { $match: { submittedAt: { $gte: sevenDaysAgo } } },
+      {
+        $group: {
+          _id: {
+            $dateToString: { format: '%Y-%m-%d', date: '$submittedAt' }
+          },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    // 补全缺失日期（无填写的日期 count=0），保证前端折线图连续
+    const trend: { date: string; count: number }[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(sevenDaysAgo);
+      d.setDate(d.getDate() + i);
+      const dateStr = d.toISOString().slice(0, 10);
+      const found = trendRaw.find(t => t._id === dateStr);
+      trend.push({ date: dateStr, count: found ? found.count : 0 });
+    }
+
+    // 3. 来源分布（跨所有答案）
+    const sourceStatsRaw = await Answer.aggregate([
+      { $group: { _id: '$source', count: { $sum: 1 } } }
+    ]);
+
+    // 4. 设备分布（跨所有答案）
+    const deviceStatsRaw = await Answer.aggregate([
+      { $group: { _id: '$device', count: { $sum: 1 } } }
+    ]);
+
+    // 5. 问卷状态分布
+    const questionnaireStatusStatsRaw = await Questionnaire.aggregate([
+      { $group: { _id: '$status', count: { $sum: 1 } } }
+    ]);
+
+    // 6. 答卷数 Top 5 问卷
+    const topQuestionnairesRaw = await Answer.aggregate([
+      { $group: { _id: '$questionnaireId', answerCount: { $sum: 1 } } },
+      { $sort: { answerCount: -1 } },
+      { $limit: 5 }
+    ]);
+
+    // 拉取 Top 5 问卷的标题与状态
+    const topIds = topQuestionnairesRaw.map(t => t._id);
+    const topQuestionnairesMeta = await Questionnaire.find({
+      _id: { $in: topIds }
+    }).select('title status');
+
+    const metaMap = new Map(
+      topQuestionnairesMeta.map(q => [String(q._id), q])
+    );
+
+    const topQuestionnaires = topQuestionnairesRaw.map(t => {
+      const meta = metaMap.get(String(t._id));
+      return {
+        _id: t._id,
+        title: meta?.title || '已删除问卷',
+        answerCount: t.answerCount,
+        status: meta?.status || 'closed'
+      };
+    });
+
+    // 7. 返回仪表盘数据
+    res.json({
+      success: true,
+      data: {
+        overview: {
+          totalQuestionnaires,
+          activeQuestionnaires,
+          totalAnswers,
+          todayNewAnswers,
+          avgDuration: Math.round(avgDurationResult[0]?.avgDuration || 0)
+        },
+        trend,
+        sourceStats: sourceStatsRaw.map(s => ({
+          source: s._id,
+          count: s.count
+        })),
+        deviceStats: deviceStatsRaw.map(s => ({
+          device: s._id,
+          count: s.count
+        })),
+        questionnaireStatusStats: questionnaireStatusStatsRaw.map(s => ({
+          status: s._id,
+          count: s.count
+        })),
+        topQuestionnaires
+      }
+    });
+
+  } catch (error) {
+    console.error('获取仪表盘数据失败:', error);
+    res.status(500).json({
+      success: false,
+      message: '获取仪表盘数据失败',
+      error: process.env.NODE_ENV === 'development'
+        ? (error as Error).message
+        : undefined
+    });
+  }
+}
+
+/**
  * 题目级统计分布构造（D-004）
  *
  * 按题型分支聚合，返回前端 StatisticsPage 渲染所需的契约结构：
