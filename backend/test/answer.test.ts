@@ -194,11 +194,8 @@ describe('答案模块 - GET /api/answers/:questionnaireId/:answerId', () => {
 // ==================== 统计数据测试 ====================
 
 describe('答案模块 - GET /api/answers/statistics/:questionnaireId', () => {
-  // BUG-001：routes/answer.ts 中 /:questionnaireId/:answerId 路由
-  // 会优先匹配 /statistics/:questionnaireId，导致 getAnswerDetail 被调用而非
-  // getStatistics，返回 404。按项目规则禁止 skip 测试，保留失败状态作为 bug 信号。
-  // 修复方案：将 statistics 路由定义移至 /:questionnaireId 与 /:questionnaireId/:answerId 之前。
-  // 详情见项目记忆 BUG-001。
+  // BUG-001 已于 2026-07-17 修复（分支 bugfix/fix-001-statistics-route-0717）：
+  // routes/answer.ts 已将 /statistics/:questionnaireId 路由移至参数路由前。
   it('D-003 应返回基础统计数据（总数/来源/设备/时长）', async () => {
     const qid = await createPublishedQuestionnaire();
 
