@@ -1,14 +1,20 @@
 /**
  * 答案模块 API 单元测试
  *
- * 测试范围（对应功能列表 D-001 ~ D-005, F-001）：
- * - POST /api/answers/submit                        提交问卷答案（公开）
+ * 测试范围（对应功能列表 D-001 ~ D-005, F-001, F-006, S-004, S-005）：
+ * - POST /api/answers/submit                        提交问卷答案（公开，含限流+防重复提交）
  * - GET  /api/answers/:questionnaireId              答案列表（分页）
  * - GET  /api/answers/:questionnaireId/:answerId    答案详情
  * - GET  /api/answers/statistics/:questionnaireId   统计数据（含 D-004 题目级分布）
  * - GET  /api/answers/:questionnaireId/export       导出答案数据（CSV/Excel）
  *
  * 关联 PRD：2.2.3 问卷填写模块、2.2.4 数据分析模块
+ *
+ * 测试隔离说明（BUG-002 修复）：
+ * - 批次 3 引入 F-006 防重复提交（同 IP+问卷 10s 窗口）和 S-005 限流（同 IP 5 次/分钟）
+ * - supertest 默认所有请求来自同一 IP，会触发上述风控规则
+ * - 因此 D-001~D-005 多用户提交场景使用 submitAnswer 辅助函数，每次分配唯一 IP
+ * - F-006/S-005 专项测试显式使用相同 IP 验证风控规则本身
  */
 
 import request from 'supertest';
@@ -42,21 +48,52 @@ async function createPublishedQuestionnaire(): Promise<string> {
   return created._id;
 }
 
+// ==================== 提交答案辅助函数 ====================
+
+/**
+ * IP 自增计数器
+ *
+ * 为每次提交分配唯一 IP（第三段从 100 开始自增），模拟不同用户提交：
+ * - 避开 F-006 防重复提交（同 IP+问卷 10s 窗口）
+ * - 避开 S-005 限流（同 IP 5 次/分钟）
+ * - 第三段自增确保脱敏后（末段置 0）仍唯一，避免 F-006 误判
+ * - 第三段从 100 开始，避开 F-006/S-004 专项测试用的 0/20/30 段
+ *
+ * 测试 F-006/S-005 防重复/限流本身时，显式传入相同 ip 即可
+ */
+let _submitIpCounter = 100;
+
+/**
+ * 提交答案辅助函数
+ *
+ * @param qid 问卷 ID
+ * @param body 答案体（不含 questionnaireId，会自动注入）
+ * @param ip 客户端 IP（可选，默认使用自增唯一 IP 模拟不同用户）
+ */
+function submitAnswer(
+  qid: string,
+  body: Record<string, any> = {},
+  ip?: string
+) {
+  const clientIp = ip || `10.0.${_submitIpCounter++}.2`;
+  return request(app)
+    .post('/api/answers/submit')
+    .set('X-Forwarded-For', clientIp)
+    .send({ questionnaireId: qid, ...body });
+}
+
 // ==================== 提交答案测试 ====================
 
 describe('答案模块 - POST /api/answers/submit', () => {
   it('F-001 应成功提交已发布问卷的答案', async () => {
     const qid = await createPublishedQuestionnaire();
 
-    const res = await request(app)
-      .post('/api/answers/submit')
-      .send({
-        questionnaireId: qid,
-        answers: buildTestAnswers(),
-        source: 'web',
-        device: 'desktop',
-        duration: 120,
-      });
+    const res = await submitAnswer(qid, {
+      answers: buildTestAnswers(),
+      source: 'web',
+      device: 'desktop',
+      duration: 120,
+    });
 
     expect(res.status).toBe(201);
     expect(res.body.success).toBe(true);
@@ -66,12 +103,9 @@ describe('答案模块 - POST /api/answers/submit', () => {
   it('F-001 提交答案无需登录（公开接口）', async () => {
     const qid = await createPublishedQuestionnaire();
 
-    const res = await request(app)
-      .post('/api/answers/submit')
-      .send({
-        questionnaireId: qid,
-        answers: buildTestAnswers(),
-      });
+    const res = await submitAnswer(qid, {
+      answers: buildTestAnswers(),
+    });
 
     expect(res.status).toBe(201);
   });
@@ -79,24 +113,18 @@ describe('答案模块 - POST /api/answers/submit', () => {
   it('F-001 草稿状态问卷应禁止提交', async () => {
     const created = await createQuestionnaireViaApi(token);
 
-    const res = await request(app)
-      .post('/api/answers/submit')
-      .send({
-        questionnaireId: created._id,
-        answers: buildTestAnswers(),
-      });
+    const res = await submitAnswer(created._id, {
+      answers: buildTestAnswers(),
+    });
 
     expect(res.status).toBe(400);
     expect(res.body.message).toContain('未发布或已关闭');
   });
 
   it('F-001 不存在的问卷应返回 404', async () => {
-    const res = await request(app)
-      .post('/api/answers/submit')
-      .send({
-        questionnaireId: '507f1f77bcf86cd799439011',
-        answers: buildTestAnswers(),
-      });
+    const res = await submitAnswer('507f1f77bcf86cd799439011', {
+      answers: buildTestAnswers(),
+    });
 
     expect(res.status).toBe(404);
   });
@@ -104,12 +132,9 @@ describe('答案模块 - POST /api/answers/submit', () => {
   it('F-001 未指定 source/device 时应使用默认值', async () => {
     const qid = await createPublishedQuestionnaire();
 
-    const res = await request(app)
-      .post('/api/answers/submit')
-      .send({
-        questionnaireId: qid,
-        answers: buildTestAnswers(),
-      });
+    const res = await submitAnswer(qid, {
+      answers: buildTestAnswers(),
+    });
 
     expect(res.status).toBe(201);
   });
@@ -121,11 +146,9 @@ describe('答案模块 - GET /api/answers/:questionnaireId', () => {
   it('D-001 应返回分页答案列表', async () => {
     const qid = await createPublishedQuestionnaire();
 
-    // 提交 3 份答案
+    // 提交 3 份答案（每次使用不同 IP 模拟不同用户，避开 F-006/S-005）
     for (let i = 0; i < 3; i++) {
-      await request(app)
-        .post('/api/answers/submit')
-        .send({ questionnaireId: qid, answers: buildTestAnswers() });
+      await submitAnswer(qid, { answers: buildTestAnswers() });
     }
 
     const res = await request(app)
@@ -141,9 +164,7 @@ describe('答案模块 - GET /api/answers/:questionnaireId', () => {
   it('D-001 支持分页参数', async () => {
     const qid = await createPublishedQuestionnaire();
     for (let i = 0; i < 5; i++) {
-      await request(app)
-        .post('/api/answers/submit')
-        .send({ questionnaireId: qid, answers: buildTestAnswers() });
+      await submitAnswer(qid, { answers: buildTestAnswers() });
     }
 
     const res = await request(app)
@@ -167,9 +188,7 @@ describe('答案模块 - GET /api/answers/:questionnaireId', () => {
 describe('答案模块 - GET /api/answers/:questionnaireId/:answerId', () => {
   it('D-002 应返回指定答案详情', async () => {
     const qid = await createPublishedQuestionnaire();
-    const submitRes = await request(app)
-      .post('/api/answers/submit')
-      .send({ questionnaireId: qid, answers: buildTestAnswers() });
+    const submitRes = await submitAnswer(qid, { answers: buildTestAnswers() });
     const answerId = submitRes.body.answerId;
 
     const res = await request(app)
@@ -200,25 +219,19 @@ describe('答案模块 - GET /api/answers/statistics/:questionnaireId', () => {
   it('D-003 应返回基础统计数据（总数/来源/设备/时长）', async () => {
     const qid = await createPublishedQuestionnaire();
 
-    // 提交多份不同来源的答案
-    await request(app)
-      .post('/api/answers/submit')
-      .send({
-        questionnaireId: qid,
-        answers: buildTestAnswers(),
-        source: 'web',
-        device: 'desktop',
-        duration: 100,
-      });
-    await request(app)
-      .post('/api/answers/submit')
-      .send({
-        questionnaireId: qid,
-        answers: buildTestAnswers(),
-        source: 'wechat',
-        device: 'mobile',
-        duration: 200,
-      });
+    // 提交多份不同来源的答案（每次不同 IP，避开 F-006/S-005）
+    await submitAnswer(qid, {
+      answers: buildTestAnswers(),
+      source: 'web',
+      device: 'desktop',
+      duration: 100,
+    });
+    await submitAnswer(qid, {
+      answers: buildTestAnswers(),
+      source: 'wechat',
+      device: 'mobile',
+      duration: 200,
+    });
 
     const res = await request(app)
       .get(`/api/answers/statistics/${qid}`)
@@ -262,9 +275,7 @@ describe('答案模块 - GET /api/answers/statistics/:questionnaireId', () => {
 
   it('D-004 应返回 questionStats 数组，长度等于问卷题目数', async () => {
     const qid = await createPublishedQuestionnaire();
-    await request(app)
-      .post('/api/answers/submit')
-      .send({ questionnaireId: qid, answers: buildTestAnswers() });
+    await submitAnswer(qid, { answers: buildTestAnswers() });
 
     const res = await request(app)
       .get(`/api/answers/statistics/${qid}`)
@@ -279,7 +290,7 @@ describe('答案模块 - GET /api/answers/statistics/:questionnaireId', () => {
   it('D-004 单选题应返回选项计数与百分比', async () => {
     const qid = await createPublishedQuestionnaire();
 
-    // 提交 3 份答案：2 男 1 女
+    // 提交 3 份答案：2 男 1 女（每次不同 IP，避开 F-006/S-005）
     const maleAnswers = [
       { questionId: 'q1', value: '男' },
       { questionId: 'q2', value: [] },
@@ -292,12 +303,9 @@ describe('答案模块 - GET /api/answers/statistics/:questionnaireId', () => {
       { questionId: 'q3', value: '' },
       { questionId: 'q4', value: 5 },
     ];
-    await request(app).post('/api/answers/submit')
-      .send({ questionnaireId: qid, answers: maleAnswers });
-    await request(app).post('/api/answers/submit')
-      .send({ questionnaireId: qid, answers: maleAnswers });
-    await request(app).post('/api/answers/submit')
-      .send({ questionnaireId: qid, answers: femaleAnswers });
+    await submitAnswer(qid, { answers: maleAnswers });
+    await submitAnswer(qid, { answers: maleAnswers });
+    await submitAnswer(qid, { answers: femaleAnswers });
 
     const res = await request(app)
       .get(`/api/answers/statistics/${qid}`)
@@ -332,8 +340,8 @@ describe('答案模块 - GET /api/answers/statistics/:questionnaireId', () => {
       { questionId: 'q3', value: '' },
       { questionId: 'q4', value: 5 },
     ];
-    await request(app).post('/api/answers/submit').send({ questionnaireId: qid, answers: answers1 });
-    await request(app).post('/api/answers/submit').send({ questionnaireId: qid, answers: answers2 });
+    await submitAnswer(qid, { answers: answers1 });
+    await submitAnswer(qid, { answers: answers2 });
 
     const res = await request(app)
       .get(`/api/answers/statistics/${qid}`)
@@ -358,9 +366,9 @@ describe('答案模块 - GET /api/answers/statistics/:questionnaireId', () => {
       { questionId: 'q3', value: text },
       { questionId: 'q4', value: 5 },
     ];
-    await request(app).post('/api/answers/submit').send({ questionnaireId: qid, answers: answers('很好') });
-    await request(app).post('/api/answers/submit').send({ questionnaireId: qid, answers: answers('很好') });
-    await request(app).post('/api/answers/submit').send({ questionnaireId: qid, answers: answers('一般') });
+    await submitAnswer(qid, { answers: answers('很好') });
+    await submitAnswer(qid, { answers: answers('很好') });
+    await submitAnswer(qid, { answers: answers('一般') });
 
     const res = await request(app)
       .get(`/api/answers/statistics/${qid}`)
@@ -385,9 +393,9 @@ describe('答案模块 - GET /api/answers/statistics/:questionnaireId', () => {
       { questionId: 'q3', value: '' },
       { questionId: 'q4', value: rating },
     ];
-    await request(app).post('/api/answers/submit').send({ questionnaireId: qid, answers: answers(5) });
-    await request(app).post('/api/answers/submit').send({ questionnaireId: qid, answers: answers(4) });
-    await request(app).post('/api/answers/submit').send({ questionnaireId: qid, answers: answers(3) });
+    await submitAnswer(qid, { answers: answers(5) });
+    await submitAnswer(qid, { answers: answers(4) });
+    await submitAnswer(qid, { answers: answers(3) });
 
     const res = await request(app)
       .get(`/api/answers/statistics/${qid}`)
@@ -428,17 +436,14 @@ describe('答案模块 - GET /api/answers/:questionnaireId/export', () => {
   it('D-005 应成功导出 CSV 格式数据', async () => {
     const qid = await createPublishedQuestionnaire();
 
-    // 提交 2 份答案
+    // 提交 2 份答案（每次不同 IP，避开 F-006/S-005）
     for (let i = 0; i < 2; i++) {
-      await request(app)
-        .post('/api/answers/submit')
-        .send({
-          questionnaireId: qid,
-          answers: buildTestAnswers(),
-          source: 'web',
-          device: 'desktop',
-          duration: 100 + i,
-        });
+      await submitAnswer(qid, {
+        answers: buildTestAnswers(),
+        source: 'web',
+        device: 'desktop',
+        duration: 100 + i,
+      });
     }
 
     const res = await request(app)
@@ -465,9 +470,7 @@ describe('答案模块 - GET /api/answers/:questionnaireId/export', () => {
 
   it('D-005 应成功导出 Excel 格式数据', async () => {
     const qid = await createPublishedQuestionnaire();
-    await request(app)
-      .post('/api/answers/submit')
-      .send({ questionnaireId: qid, answers: buildTestAnswers() });
+    await submitAnswer(qid, { answers: buildTestAnswers() });
 
     const res = await request(app)
       .get(`/api/answers/${qid}/export`)
@@ -493,9 +496,7 @@ describe('答案模块 - GET /api/answers/:questionnaireId/export', () => {
 
   it('D-005 未指定 format 时应默认导出 CSV', async () => {
     const qid = await createPublishedQuestionnaire();
-    await request(app)
-      .post('/api/answers/submit')
-      .send({ questionnaireId: qid, answers: buildTestAnswers() });
+    await submitAnswer(qid, { answers: buildTestAnswers() });
 
     const res = await request(app)
       .get(`/api/answers/${qid}/export`)
@@ -541,9 +542,7 @@ describe('答案模块 - GET /api/answers/:questionnaireId/export', () => {
       { questionId: 'q3', value: '服务很好' },
       { questionId: 'q4', value: 5 },
     ];
-    await request(app)
-      .post('/api/answers/submit')
-      .send({ questionnaireId: qid, answers: multiAnswers });
+    await submitAnswer(qid, { answers: multiAnswers });
 
     const res = await request(app)
       .get(`/api/answers/${qid}/export`)
@@ -553,5 +552,131 @@ describe('答案模块 - GET /api/answers/:questionnaireId/export', () => {
     const noBom = res.text.replace(/^\ufeff/, '');
     // 第二行（数据行）应包含多选题的 "|" 分隔符
     expect(noBom.split('\n')[1]).toContain('|');
+  });
+});
+
+// ==================== F-006 防重复提交 + S-005 限流 + S-004 IP 脱敏 测试 ====================
+//
+// 这些测试显式使用相同 IP 验证风控规则本身。
+// 注意：rateLimit 是模块级单例 Map，限流计数会跨用例累积；为避免相互干扰，
+// F-006 防重复提交测试与 S-005 限流测试分别使用独立 IP 段。
+
+describe('答案模块 - F-006 防重复提交', () => {
+  it('F-006 同一 IP + 同一问卷 10 秒内连续提交应被拒绝（返回 429）', async () => {
+    const qid = await createPublishedQuestionnaire();
+    // 使用固定 IP（仅本测试用例使用，避免与其他用例干扰）
+    const fixedIp = '10.0.0.100';
+
+    // 第 1 次提交：成功
+    const res1 = await submitAnswer(qid, { answers: buildTestAnswers() }, fixedIp);
+    expect(res1.status).toBe(201);
+
+    // 第 2 次提交：同一 IP + 同一问卷，10s 窗口内，应被 F-006 拒绝
+    const res2 = await submitAnswer(qid, { answers: buildTestAnswers() }, fixedIp);
+    expect(res2.status).toBe(429);
+    expect(res2.body.success).toBe(false);
+    expect(res2.body.message).toContain('频繁');
+  });
+
+  it('F-006 不同 IP 提交同一问卷应被允许', async () => {
+    const qid = await createPublishedQuestionnaire();
+
+    // IP A 提交（脱敏后 10.0.0.0）
+    const res1 = await submitAnswer(qid, { answers: buildTestAnswers() }, '10.0.0.200');
+    expect(res1.status).toBe(201);
+
+    // IP B 提交同一问卷，应成功（脱敏后 10.0.1.0，与 A 不同）
+    const res2 = await submitAnswer(qid, { answers: buildTestAnswers() }, '10.0.1.200');
+    expect(res2.status).toBe(201);
+  });
+
+  it('F-006 同一 IP 提交不同问卷应被允许', async () => {
+    const qid1 = await createPublishedQuestionnaire();
+    const qid2 = await createPublishedQuestionnaire();
+    const fixedIp = '10.0.2.100';
+
+    // 同一 IP 提交问卷 1
+    const res1 = await submitAnswer(qid1, { answers: buildTestAnswers() }, fixedIp);
+    expect(res1.status).toBe(201);
+
+    // 同一 IP 提交问卷 2，应成功（防重复以 IP+问卷 为键）
+    const res2 = await submitAnswer(qid2, { answers: buildTestAnswers() }, fixedIp);
+    expect(res2.status).toBe(201);
+  });
+});
+
+describe('答案模块 - S-005 接口限流', () => {
+  it('S-005 同一 IP 1 分钟内超过 5 次请求应被限流（返回 429）', async () => {
+    // 每次创建新问卷，避免触发 F-006 防重复提交
+    // 使用独立 IP 段，避免与 F-006 测试用例的 IP 冲突
+    const fixedIp = '172.16.0.50';
+
+    // 前 5 次请求应成功（201 或 400 都算通过限流）
+    for (let i = 0; i < 5; i++) {
+      const qid = await createPublishedQuestionnaire();
+      const res = await submitAnswer(qid, { answers: buildTestAnswers() }, fixedIp);
+      expect(res.status).toBe(201);
+    }
+
+    // 第 6 次请求应被 S-005 限流拦截
+    const qid6 = await createPublishedQuestionnaire();
+    const res6 = await submitAnswer(qid6, { answers: buildTestAnswers() }, fixedIp);
+    expect(res6.status).toBe(429);
+    // 限流响应应包含 Retry-After 头
+    expect(res6.headers['retry-after']).toBeDefined();
+    expect(res6.headers['x-ratelimit-limit']).toBe('5');
+  });
+});
+
+describe('答案模块 - S-004 IP 收集与脱敏', () => {
+  it('S-004 提交答案后，答案记录应存储脱敏 IP（末段置 0）', async () => {
+    const qid = await createPublishedQuestionnaire();
+    // 真实 IP 10.20.30.123，脱敏后应为 10.20.30.0
+    const realIp = '10.20.30.123';
+
+    const submitRes = await submitAnswer(qid, { answers: buildTestAnswers() }, realIp);
+    expect(submitRes.status).toBe(201);
+    const answerId = submitRes.body.answerId;
+
+    // 通过答案详情接口读取记录，校验 ipAddress 字段
+    const res = await request(app)
+      .get(`/api/answers/${qid}/${answerId}`)
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.answer.ipAddress).toBe('10.20.30.0');
+    // 原始 IP 不应直接出现在记录中
+    expect(res.body.answer.ipAddress).not.toContain('123');
+  });
+
+  it('S-004 IPv4-mapped IPv6 应正确脱敏', async () => {
+    const qid = await createPublishedQuestionnaire();
+    // ::ffff:10.20.30.123 应脱敏为 ::ffff:10.20.30.0
+    const mappedIp = '::ffff:10.20.30.123';
+
+    const submitRes = await submitAnswer(qid, { answers: buildTestAnswers() }, mappedIp);
+    expect(submitRes.status).toBe(201);
+    const answerId = submitRes.body.answerId;
+
+    const res = await request(app)
+      .get(`/api/answers/${qid}/${answerId}`)
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.answer.ipAddress).toBe('::ffff:10.20.30.0');
+  });
+
+  it('S-004 防重复提交以脱敏 IP 为键（同 /24 网段 10s 内只能 1 次）', async () => {
+    const qid = await createPublishedQuestionnaire();
+    // 10.30.40.10 与 10.30.40.200 脱敏后都为 10.30.40.0
+    const ip1 = '10.30.40.10';
+    const ip2 = '10.30.40.200';
+
+    const res1 = await submitAnswer(qid, { answers: buildTestAnswers() }, ip1);
+    expect(res1.status).toBe(201);
+
+    // 不同原始 IP，但脱敏后相同，应被 F-006 拦截
+    const res2 = await submitAnswer(qid, { answers: buildTestAnswers() }, ip2);
+    expect(res2.status).toBe(429);
   });
 });

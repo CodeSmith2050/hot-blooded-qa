@@ -16,7 +16,7 @@ import { Questionnaire, IQuestion } from '../models/Questionnaire';
 
 /**
  * 提交问卷答案
- * 
+ *
  * 请求方法：POST
  * 请求路径：/api/answers/submit
  * 请求体：{
@@ -27,17 +27,24 @@ import { Questionnaire, IQuestion } from '../models/Questionnaire';
  *   device?: DeviceType,        // 设备类型
  *   duration?: number           // 填写时长（秒）
  * }
- * 
+ *
  * 处理流程：
  * 1. 验证问卷存在且处于已发布状态
- * 2. 创建答案记录
- * 3. 返回提交成功响应
- * 
+ * 2. 获取客户端 IP 并脱敏（S-004）
+ * 3. 防重复提交校验：同一 IP + 问卷在 DEDUP_WINDOW_MS 内只允许 1 次（F-006）
+ * 4. 创建答案记录（含脱敏 IP）
+ * 5. 返回提交成功响应
+ *
  * 注意：此接口无需认证，公众可提交
- * 
+ * 路由层另挂载全局限流中间件（S-005），防止单 IP 高频刷接口
+ *
  * @param req - Express请求对象
  * @param res - Express响应对象
  */
+
+// F-006 防重复提交时间窗口：同一 IP + 问卷在 10 秒内只允许 1 次提交
+const DEDUP_WINDOW_MS = 10 * 1000;
+
 export async function submitAnswer(
   req: Request,
   res: Response
@@ -54,7 +61,7 @@ export async function submitAnswer(
 
     // 1. 验证问卷
     const questionnaire = await Questionnaire.findById(questionnaireId);
-    
+
     if (!questionnaire) {
       res.status(404).json({
         success: false,
@@ -72,19 +79,44 @@ export async function submitAnswer(
       return;
     }
 
-    // 3. 创建答案记录
+    // 3. 获取客户端 IP 并脱敏（S-004）
+    const ipAddress = maskIp(getClientIp(req));
+
+    // 4. 防重复提交校验（F-006）
+    //    同一脱敏 IP + 问卷在 DEDUP_WINDOW_MS 内已有答案 → 拒绝
+    //    使用脱敏 IP 是因为：原始 IP 已不存储，仅以脱敏 IP 作为风控键
+    //    代价是同一 /24 网段内多人在 10s 内只能 1 次提交，对低频业务可接受
+    const dedupSince = new Date(Date.now() - DEDUP_WINDOW_MS);
+    const recentAnswer = await Answer.findOne({
+      ipAddress,
+      questionnaireId,
+      submittedAt: { $gt: dedupSince }
+    })
+      .sort({ submittedAt: -1 })
+      .limit(1);
+
+    if (recentAnswer) {
+      res.status(429).json({
+        success: false,
+        message: '提交过于频繁，请稍后再试'
+      });
+      return;
+    }
+
+    // 5. 创建答案记录（含脱敏 IP）
     const answer = new Answer({
       questionnaireId,
       answers,
       respondent,
       source: source || 'web',
       device: device || detectDevice(req),
+      ipAddress,
       duration: duration || 0
     });
 
     await answer.save();
 
-    // 4. 返回成功响应
+    // 6. 返回成功响应
     res.status(201).json({
       success: true,
       message: '答案提交成功',
@@ -104,15 +136,68 @@ export async function submitAnswer(
 }
 
 /**
+ * 获取客户端真实 IP
+ *
+ * 优先级：X-Forwarded-For 第一段 > X-Real-IP > req.ip > connection.remoteAddress
+ * 注意：仅在信任的反向代理后才能信任 X-Forwarded-For（生产环境应配置 app.set('trust proxy')）
+ *
+ * @param req - Express请求对象
+ */
+function getClientIp(req: Request): string {
+  const xForwardedFor = req.headers['x-forwarded-for'];
+  if (typeof xForwardedFor === 'string' && xForwardedFor.length > 0) {
+    // X-Forwarded-For 可能是 "client, proxy1, proxy2"，取第一个
+    return xForwardedFor.split(',')[0].trim();
+  }
+  const xRealIp = req.headers['x-real-ip'];
+  if (typeof xRealIp === 'string' && xRealIp.length > 0) {
+    return xRealIp.trim();
+  }
+  return req.ip || req.socket?.remoteAddress || '';
+}
+
+/**
+ * IP 脱敏：IPv4 保留前 3 段，末段置 0；非 IPv4 原样返回
+ *
+ * 示例：
+ *   192.168.1.100 → 192.168.1.0
+ *   10.0.0.5       → 10.0.0.0
+ *   ::1            → ::1（非 IPv4 原样返回）
+ *   unknown        → unknown
+ *
+ * @param ip 原始 IP 字符串
+ */
+function maskIp(ip: string): string {
+  if (!ip) return '';
+  // IPv4 标准格式判断
+  const ipv4Match = ip.match(/^(\d{1,3}\.){3}\d{1,3}$/);
+  if (ipv4Match) {
+    const parts = ip.split('.');
+    parts[3] = '0';
+    return parts.join('.');
+  }
+  // 处理 ::ffff:192.168.1.100 这种 IPv4-mapped IPv6 形式
+  const mappedMatch = ip.match(/^::ffff:(\d{1,3}\.){3}\d{1,3}$/);
+  if (mappedMatch) {
+    const ipv4 = ip.replace('::ffff:', '');
+    const parts = ipv4.split('.');
+    parts[3] = '0';
+    return `::ffff:${parts.join('.')}`;
+  }
+  // 其他形式（IPv6、unknown 等）原样返回
+  return ip;
+}
+
+/**
  * 检测设备类型
  * 根据User-Agent判断访问设备
- * 
+ *
  * @param req - Express请求对象
  * @returns DeviceType - 设备类型
  */
 function detectDevice(req: Request): 'desktop' | 'mobile' | 'tablet' {
   const userAgent = req.headers['user-agent'] || '';
-  
+
   if (/mobile|android|iphone/i.test(userAgent)) {
     return 'mobile';
   }

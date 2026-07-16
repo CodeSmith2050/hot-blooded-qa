@@ -3,7 +3,7 @@
 > 本文件为 Trae 项目记忆，会被 IDE 自动加载，作为后续开发的上下文规则。
 > 详细功能进度请查阅 [docs/功能列表.md](../../docs/功能列表.md)。
 >
-> **最后更新**：2026-07-17（批次 2 D-004/V-004 完成）
+> **最后更新**：2026-07-17（批次 3 F-006/S-005/S-004 完成）
 
 ---
 
@@ -12,7 +12,7 @@
 - **项目名称**：热血问答 - 无偿献血人群问卷调研系统
 - **技术栈**：前端 React 18 + Vite + Ant Design 5 + ECharts + Zustand；后端 Node.js + Express + TypeScript + MongoDB (Mongoose 8)
 - **文档位置**：所有产品/方案/进度文档统一存放于 `docs/`，包括 [PRD.md](../../docs/PRD.md)、[可行性方案.md](../../docs/可行性方案.md)、[功能列表.md](../../docs/功能列表.md)
-- **当前总体进度**：约 77.9%（70 项功能中 52 完成、5 部分完成、13 未开始）
+- **当前总体进度**：约 81.4%（70 项功能中 55 完成、4 部分完成、11 未开始）
 
 ---
 
@@ -22,8 +22,8 @@
 |-------|------|------|
 | M1 需求/方案/DB设计 | ✅ | 已完成 |
 | M2 前端页面开发 | 🟡 85% | 题目级图表已完成；缺 Dashboard、词云/热力图等高级图表 |
-| M3 后端 API 开发 | 🟡 85% | 导出与题目级统计已完成；缺防重复提交 |
-| M4 测试通过 | 🟡 60% | 后端 API 测试 79 用例全通过；前端/E2E 待补 |
+| M3 后端 API 开发 | 🟡 90% | 导出+题目级统计+防重复提交+限流+IP 脱敏已完成；缺仪表盘接口、完成率字段、角色权限接口、逻辑跳转、筛选 |
+| M4 测试通过 | 🟡 65% | 后端 API 测试 86 用例全通过；前端/E2E 待补 |
 | M5 上线部署 | 🟡 | 部署配置已就绪，用户手册未交付 |
 
 ---
@@ -180,6 +180,13 @@
   - 修复内容：将 `/statistics/:questionnaireId` 路由移至 `/:questionnaireId` 与 `/:questionnaireId/:answerId` 之前
   - 验证结果：66 个单元测试全部通过，answerController 覆盖率从 61.01% 提升至 83.05%
 
+- **BUG-002**（已修复，2026-07-17）：F-006/S-005 引入后破坏现有 D-001~D-005 连续提交测试
+  - 修复分支：`feature/batch3-anti-spam-0717`（与功能开发同分支）
+  - 修复内容：
+    1. `routes/answer.ts` 为 rateLimit 添加 `keyGenerator: extractClientIp`，显式解析 X-Forwarded-For 头（兼容未配置 trust proxy 的场景）
+    2. `test/answer.test.ts` 引入 `submitAnswer` 辅助函数，为每次提交分配唯一 IP（`10.0.${counter++}.2`），模拟不同用户提交
+  - 验证结果：86 个单元测试全部通过，answerController 覆盖率从 83.05% 提升至 87.7%，rateLimit.ts 覆盖率 79.31%
+
 ---
 
 ## 9. 变更记录
@@ -194,3 +201,4 @@
 | 2026-07-17 | 重构项目基本工作流程铁律为分步流程，明确测试失败的「记录报告+最小改动修复」分支 |
 | 2026-07-17 | 批次 1：D-005 数据导出功能（CSV/Excel）完成，新增 `GET /api/answers/:questionnaireId/export` 接口及 7 个测试用例，整体进度 75% → 76.4%，M3 75% → 80%，M4 0% → 55% |
 | 2026-07-17 | 批次 2：D-004 题目级统计分布 + V-004 题目级图表完成。后端 getStatistics 新增 questionStats 字段（按题型聚合：单选/多选选项计数+百分比、文本去重计数、评分平均分+分布），新增 6 个测试用例；前端修复 api.ts statistics 路径不一致 + fetchStatistics 字段映射 + QuestionStatCard 题型判断兼容 single/multiple。整体进度 76.4% → 77.9%，M2 80% → 85%，M3 80% → 85%，M4 55% → 60% |
+| 2026-07-17 | 批次 3：F-006 防重复提交 + S-005 限流 + S-004 IP 脱敏完成。新增 `middleware/rateLimit.ts` 内存固定窗口限流（5 次/分钟），submitAnswer 内 DEDUP_WINDOW_MS=10s 业务级防重复；Answer 模型新增 ipAddress 字段（脱敏末段置 0）+ 复合索引；新增 7 个 F-006/S-005/S-004 专项测试用例；BUG-002 同步修复（answer.test.ts 引入 submitAnswer 辅助函数分配唯一 IP）。整体进度 77.9% → 81.4%，M3 85% → 90%，M4 60% → 65% |
