@@ -194,12 +194,12 @@ describe('答案模块 - GET /api/answers/:questionnaireId/:answerId', () => {
 // ==================== 统计数据测试 ====================
 
 describe('答案模块 - GET /api/answers/statistics/:questionnaireId', () => {
-  // BUG 记录：routes/answer.ts 中 /:questionnaireId/:answerId 路由
+  // BUG-001：routes/answer.ts 中 /:questionnaireId/:answerId 路由
   // 会优先匹配 /statistics/:questionnaireId，导致 getAnswerDetail 被调用而非
-  // getStatistics，返回 404。修复方案：将 statistics 路由定义移至
-  // /:questionnaireId 与 /:questionnaireId/:answerId 之前。
-  // 待源码修复后取消下方 skip。
-  it.skip('D-003 应返回基础统计数据（总数/来源/设备/时长）', async () => {
+  // getStatistics，返回 404。按项目规则禁止 skip 测试，保留失败状态作为 bug 信号。
+  // 修复方案：将 statistics 路由定义移至 /:questionnaireId 与 /:questionnaireId/:answerId 之前。
+  // 详情见项目记忆 BUG-001。
+  it('D-003 应返回基础统计数据（总数/来源/设备/时长）', async () => {
     const qid = await createPublishedQuestionnaire();
 
     // 提交多份不同来源的答案
@@ -235,7 +235,7 @@ describe('答案模块 - GET /api/answers/statistics/:questionnaireId', () => {
     expect(res.body.statistics.avgDuration).toBe(150);
   });
 
-  it.skip('D-003 无答案问卷统计应返回 0', async () => {
+  it('D-003 无答案问卷统计应返回 0', async () => {
     const qid = await createPublishedQuestionnaire();
 
     const res = await request(app)
