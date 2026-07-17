@@ -60,6 +60,7 @@ export interface IAnswer extends Document {
   ipAddress?: string;                          // 脱敏后的客户端 IP（S-004）
   submittedAt: Date;                          // 提交时间
   duration: number;                            // 填写时长（秒）
+  isCompleted: boolean;                        // 是否完成所有必答题（S-006）
 }
 
 /**
@@ -144,6 +145,14 @@ const answerSchema = new Schema<IAnswer>(
       min: [0, '填写时长不能为负数'],
       // 单位：秒
       // 通常通过前端计时器计算：提交时间 - 开始填写时间
+    },
+    isCompleted: {
+      // S-006 完成率字段：是否完成所有必答题
+      // 由 submitAnswer 控制器在提交时计算：所有 required 题目都有非空答案 → true
+      // 用于统计接口返回 completedAnswers 与 completionRate
+      type: Boolean,
+      default: false,
+      index: true  // 加速按完成状态筛选/聚合
     }
   },
   {

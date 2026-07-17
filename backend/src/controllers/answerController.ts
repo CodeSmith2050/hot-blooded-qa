@@ -104,6 +104,8 @@ export async function submitAnswer(
     }
 
     // 5. 创建答案记录（含脱敏 IP）
+    //    S-006 计算 isCompleted：所有 required 题目都有非空答案
+    const isCompleted = checkCompletion(questionnaire.questions, answers);
     const answer = new Answer({
       questionnaireId,
       answers,
@@ -111,7 +113,8 @@ export async function submitAnswer(
       source: source || 'web',
       device: device || detectDevice(req),
       ipAddress,
-      duration: duration || 0
+      duration: duration || 0,
+      isCompleted
     });
 
     await answer.save();
@@ -120,7 +123,8 @@ export async function submitAnswer(
     res.status(201).json({
       success: true,
       message: '答案提交成功',
-      answerId: answer._id
+      answerId: answer._id,
+      isCompleted
     });
 
   } catch (error) {
@@ -133,6 +137,47 @@ export async function submitAnswer(
         : undefined
     });
   }
+}
+
+/**
+ * 完成度判定（S-006）
+ *
+ * 规则：问卷中所有 required=true 的题目都被作答（非空）→ 完成
+ * 空值定义：
+ *   - undefined / null / '' 视为未作答
+ *   - 空数组 [] 视为未作答（多选题至少选 1 项）
+ *   - 空对象 {} 视为未作答（矩阵题至少填 1 行）
+ *   - 数字 0 视为已作答（评分题 0 分也是有效作答，但本系统 ratingMin=1）
+ *
+ * @param questions 问卷题目定义
+ * @param answers 提交的答案列表
+ * @returns 是否完成所有必答题
+ */
+function checkCompletion(
+  questions: IQuestion[],
+  answers: AnswerValue[]
+): boolean {
+  // 遍历所有 required 题目，任一未作答或空值 → false
+  return questions.every(q => {
+    if (!q.required) return true;
+    const ans = answers.find(a => a.questionId === q.id);
+    if (!ans) return false;
+    return !isAnswerEmpty(ans.value);
+  });
+}
+
+/**
+ * 判断答案值是否为空
+ */
+function isAnswerEmpty(
+  value: string | string[] | number | Record<string, string> | undefined
+): boolean {
+  if (value === undefined || value === null) return true;
+  if (typeof value === 'string') return value.trim() === '';
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === 'object') return Object.keys(value).length === 0;
+  // number 类型：0 也算已作答（评分题）
+  return false;
 }
 
 /**
@@ -344,8 +389,15 @@ export async function getStatistics(
       return;
     }
 
-    // 2. 统计总答案数
-    const totalAnswers = await Answer.countDocuments({ questionnaireId });
+    // 2. 统计总答案数与完成数（S-006）
+    const [totalAnswers, completedAnswers] = await Promise.all([
+      Answer.countDocuments({ questionnaireId }),
+      Answer.countDocuments({ questionnaireId, isCompleted: true })
+    ]);
+    // 完成率 = 完成数 / 总数 * 100，保留 1 位小数；分母为 0 时返回 0
+    const completionRate = totalAnswers > 0
+      ? Math.round((completedAnswers / totalAnswers) * 1000) / 10
+      : 0;
 
     // 3. 按来源统计（使用聚合管道）
     const sourceStats = await Answer.aggregate([
@@ -383,6 +435,8 @@ export async function getStatistics(
       },
       statistics: {
         totalAnswers,
+        completedAnswers,        // S-006 完成数
+        completionRate,          // S-006 完成率（百分比，1 位小数）
         sourceStats: sourceStats.map(s => ({
           source: s._id,
           count: s.count
@@ -426,7 +480,8 @@ export async function getStatistics(
  *         activeQuestionnaires,   // 活跃问卷数（status=published）
  *         totalAnswers,           // 总填写数
  *         todayNewAnswers,        // 今日新增填写数
- *         avgDuration             // 平均填写时长（秒，四舍五入）
+ *         avgDuration,            // 平均填写时长（秒，四舍五入）
+ *         avgCompletionRate       // 平均完成率（百分比，1 位小数，S-006）
  *       },
  *       trend: [{ date: 'YYYY-MM-DD', count }],            // 近 7 天填写趋势
  *       sourceStats: [{ source, count }],                  // 来源分布（跨所有答案）
@@ -437,9 +492,9 @@ export async function getStatistics(
  *   }
  *
  * 设计说明：
- *   - 完成率字段（isCompleted）暂未实现（见 S-006），故 overview 不返回 avgCompletionRate
+ *   - 完成率（S-006）：跨所有答案聚合 isCompleted=true 的占比，保留 1 位小数
  *   - 满意度分布需跨问卷聚合所有 rating 题型答案，逻辑复杂，留待 V-005 评分雷达图批次实现
- *   - 所有聚合均使用 MongoDB aggregate 管道，单次请求执行 6 个聚合查询
+ *   - 所有聚合均使用 MongoDB aggregate 管道，单次请求执行 7 个聚合查询
  *
  * @param req - Express请求对象
  * @param res - Express响应对象
@@ -449,7 +504,7 @@ export async function getDashboard(
   res: Response
 ): Promise<void> {
   try {
-    // 1. 概览：总问卷数、活跃问卷数、总填写数、今日新增、平均时长
+    // 1. 概览：总问卷数、活跃问卷数、总填写数、今日新增、平均时长、完成数
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
@@ -458,7 +513,8 @@ export async function getDashboard(
       activeQuestionnaires,
       totalAnswers,
       todayNewAnswers,
-      avgDurationResult
+      avgDurationResult,
+      completedAnswersResult
     ] = await Promise.all([
       Questionnaire.countDocuments(),
       Questionnaire.countDocuments({ status: 'published' }),
@@ -466,8 +522,19 @@ export async function getDashboard(
       Answer.countDocuments({ submittedAt: { $gte: startOfToday } }),
       Answer.aggregate([
         { $group: { _id: null, avgDuration: { $avg: '$duration' } } }
+      ]),
+      // S-006 跨问卷完成数
+      Answer.aggregate([
+        { $match: { isCompleted: true } },
+        { $group: { _id: null, completed: { $sum: 1 } } }
       ])
     ]);
+
+    // S-006 平均完成率 = 完成数 / 总数 * 100，保留 1 位小数
+    const completedAnswers = completedAnswersResult[0]?.completed || 0;
+    const avgCompletionRate = totalAnswers > 0
+      ? Math.round((completedAnswers / totalAnswers) * 1000) / 10
+      : 0;
 
     // 2. 近 7 天填写趋势：按日期分组
     const sevenDaysAgo = new Date();
@@ -548,7 +615,8 @@ export async function getDashboard(
           activeQuestionnaires,
           totalAnswers,
           todayNewAnswers,
-          avgDuration: Math.round(avgDurationResult[0]?.avgDuration || 0)
+          avgDuration: Math.round(avgDurationResult[0]?.avgDuration || 0),
+          avgCompletionRate  // S-006 跨问卷平均完成率
         },
         trend,
         sourceStats: sourceStatsRaw.map(s => ({
