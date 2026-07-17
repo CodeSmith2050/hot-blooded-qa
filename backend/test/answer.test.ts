@@ -901,3 +901,234 @@ describe('答案模块 - GET /api/answers/statistics/dashboard', () => {
     });
   });
 });
+
+// ==================== S-006 完成率字段与计算测试 ====================
+
+/**
+ * S-006 完成率测试
+ *
+ * 完成判定规则：问卷中所有 required=true 的题目都被作答（非空）→ isCompleted=true
+ * 空值定义：
+ *   - undefined / null / '' 视为未作答
+ *   - 空数组 [] 视为未作答
+ *   - 空对象 {} 视为未作答
+ *   - 数字 0 视为已作答
+ *
+ * buildTestQuestions() 中：
+ *   - q1（单选，required: true）
+ *   - q2（多选，required: false）
+ *   - q3（文本，required: false）
+ *   - q4（评分，required: true）
+ *
+ * 完整答案 buildTestAnswers() → isCompleted=true
+ * 缺 q1 或 q4 → isCompleted=false
+ * q1 空字符串 → isCompleted=false
+ */
+describe('答案模块 - S-006 isCompleted 字段计算', () => {
+  it('S-006 提交完整答案（所有必答题作答）应 isCompleted=true', async () => {
+    const qid = await createPublishedQuestionnaire();
+
+    const res = await submitAnswer(qid, {
+      answers: buildTestAnswers(),
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.isCompleted).toBe(true);
+  });
+
+  it('S-006 缺少必答题（缺 q1）应 isCompleted=false', async () => {
+    const qid = await createPublishedQuestionnaire();
+
+    const res = await submitAnswer(qid, {
+      answers: [
+        { questionId: 'q2', value: ['帮助他人'] },
+        { questionId: 'q3', value: '不错' },
+        { questionId: 'q4', value: 5 },
+      ],
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.isCompleted).toBe(false);
+  });
+
+  it('S-006 缺少必答题（缺 q4）应 isCompleted=false', async () => {
+    const qid = await createPublishedQuestionnaire();
+
+    const res = await submitAnswer(qid, {
+      answers: [
+        { questionId: 'q1', value: '男' },
+        { questionId: 'q2', value: ['帮助他人'] },
+        { questionId: 'q3', value: '不错' },
+      ],
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.isCompleted).toBe(false);
+  });
+
+  it('S-006 必答题空字符串应 isCompleted=false', async () => {
+    const qid = await createPublishedQuestionnaire();
+
+    const res = await submitAnswer(qid, {
+      answers: [
+        { questionId: 'q1', value: '' },
+        { questionId: 'q2', value: ['帮助他人'] },
+        { questionId: 'q3', value: '不错' },
+        { questionId: 'q4', value: 5 },
+      ],
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.isCompleted).toBe(false);
+  });
+
+  it('S-006 仅作答非必答题（不作答必答题）应 isCompleted=false', async () => {
+    const qid = await createPublishedQuestionnaire();
+
+    const res = await submitAnswer(qid, {
+      answers: [
+        { questionId: 'q2', value: ['帮助他人'] },
+        { questionId: 'q3', value: '不错' },
+      ],
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.isCompleted).toBe(false);
+  });
+
+  it('S-006 数据库记录应正确保存 isCompleted 字段', async () => {
+    const qid = await createPublishedQuestionnaire();
+
+    // 提交完整答案
+    const submitRes = await submitAnswer(qid, { answers: buildTestAnswers() });
+    const answerId = submitRes.body.answerId;
+
+    // 通过答案详情接口读取，校验 isCompleted 字段
+    const res = await request(app)
+      .get(`/api/answers/${qid}/${answerId}`)
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.answer.isCompleted).toBe(true);
+  });
+});
+
+describe('答案模块 - S-006 统计接口完成率返回', () => {
+  it('S-006 统计接口应返回 completedAnswers 与 completionRate 字段', async () => {
+    const qid = await createPublishedQuestionnaire();
+
+    // 提交 1 份完整答案
+    await submitAnswer(qid, { answers: buildTestAnswers() });
+
+    const res = await request(app)
+      .get(`/api/answers/statistics/${qid}`)
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.statistics.completedAnswers).toBeDefined();
+    expect(res.body.statistics.completionRate).toBeDefined();
+  });
+
+  it('S-006 完成率计算正确（2 完成 / 3 总数 = 66.7%）', async () => {
+    const qid = await createPublishedQuestionnaire();
+
+    // 2 份完整答案
+    await submitAnswer(qid, { answers: buildTestAnswers() });
+    await submitAnswer(qid, { answers: buildTestAnswers() });
+
+    // 1 份不完整答案（缺 q1）
+    await submitAnswer(qid, {
+      answers: [
+        { questionId: 'q2', value: ['帮助他人'] },
+        { questionId: 'q3', value: '不错' },
+        { questionId: 'q4', value: 5 },
+      ],
+    });
+
+    const res = await request(app)
+      .get(`/api/answers/statistics/${qid}`)
+      .set(authHeader(token));
+
+    expect(res.body.statistics.totalAnswers).toBe(3);
+    expect(res.body.statistics.completedAnswers).toBe(2);
+    // 2/3 = 66.666... 保留 1 位小数 = 66.7
+    expect(res.body.statistics.completionRate).toBe(66.7);
+  });
+
+  it('S-006 无答案问卷完成率应为 0', async () => {
+    const qid = await createPublishedQuestionnaire();
+
+    const res = await request(app)
+      .get(`/api/answers/statistics/${qid}`)
+      .set(authHeader(token));
+
+    expect(res.body.statistics.totalAnswers).toBe(0);
+    expect(res.body.statistics.completedAnswers).toBe(0);
+    expect(res.body.statistics.completionRate).toBe(0);
+  });
+
+  it('S-006 全部完成时完成率应为 100', async () => {
+    const qid = await createPublishedQuestionnaire();
+
+    await submitAnswer(qid, { answers: buildTestAnswers() });
+    await submitAnswer(qid, { answers: buildTestAnswers() });
+
+    const res = await request(app)
+      .get(`/api/answers/statistics/${qid}`)
+      .set(authHeader(token));
+
+    expect(res.body.statistics.totalAnswers).toBe(2);
+    expect(res.body.statistics.completedAnswers).toBe(2);
+    expect(res.body.statistics.completionRate).toBe(100);
+  });
+});
+
+describe('答案模块 - S-006 仪表盘跨问卷完成率', () => {
+  it('S-006 仪表盘 overview 应返回 avgCompletionRate 字段', async () => {
+    const qid = await createPublishedQuestionnaire();
+    await submitAnswer(qid, { answers: buildTestAnswers() });
+
+    const res = await request(app)
+      .get('/api/answers/statistics/dashboard')
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.overview.avgCompletionRate).toBeDefined();
+  });
+
+  it('S-006 仪表盘 avgCompletionRate 应跨问卷正确计算', async () => {
+    // 问卷 1：2 完整 + 1 不完整 = 66.7%
+    const qid1 = await createPublishedQuestionnaire();
+    await submitAnswer(qid1, { answers: buildTestAnswers() });
+    await submitAnswer(qid1, { answers: buildTestAnswers() });
+    await submitAnswer(qid1, {
+      answers: [
+        { questionId: 'q2', value: ['帮助他人'] },
+        { questionId: 'q3', value: '不错' },
+        { questionId: 'q4', value: 5 },
+      ],
+    });
+
+    // 问卷 2：1 完整 = 100%
+    const qid2 = await createPublishedQuestionnaire();
+    await submitAnswer(qid2, { answers: buildTestAnswers() });
+
+    const res = await request(app)
+      .get('/api/answers/statistics/dashboard')
+      .set(authHeader(token));
+
+    // 跨问卷：完成数 = 3，总数 = 4，完成率 = 75.0%
+    expect(res.body.data.overview.avgCompletionRate).toBe(75);
+  });
+
+  it('S-006 仪表盘无答案时 avgCompletionRate 应为 0', async () => {
+    // 仅创建问卷，不提交答案
+    await createPublishedQuestionnaire();
+
+    const res = await request(app)
+      .get('/api/answers/statistics/dashboard')
+      .set(authHeader(token));
+
+    expect(res.body.data.overview.avgCompletionRate).toBe(0);
+  });
+});

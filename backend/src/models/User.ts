@@ -11,6 +11,17 @@ import mongoose, { Document, Schema } from 'mongoose';
 import bcrypt from 'bcryptjs';
 
 /**
+ * 用户角色类型（U-006 三角色体系）
+ *
+ * - admin：管理员，完全权限，可管理所有问卷、用户、查看全部数据
+ * - analyst：分析师，只读权限，可查看问卷列表/详情、统计、答案、导出、仪表盘
+ * - editor：编辑者，可创建/编辑/删除自己的问卷、发布/关闭，但不能查看他人数据/统计/答案
+ *
+ * 历史兼容：旧数据中的 'user' 角色应在迁移时转为 'editor'（默认编辑权限）
+ */
+export type UserRole = 'admin' | 'analyst' | 'editor';
+
+/**
  * 用户文档接口
  * 继承自 Document 以获得 Mongoose 文档的功能
  */
@@ -18,10 +29,10 @@ export interface IUser extends Document {
   username: string;          // 用户名（唯一）
   email: string;            // 邮箱（唯一）
   password: string;         // 密码（加密存储）
-  role: 'admin' | 'user';   // 角色：admin-管理员，user-普通用户
+  role: UserRole;           // 角色：admin/analyst/editor（U-006）
   createdAt: Date;          // 创建时间
   updatedAt: Date;          // 更新时间
-  
+
   /**
    * 密码比对方法
    * 用于验证用户登录时输入的密码
@@ -61,10 +72,12 @@ const userSchema = new Schema<IUser>(
     role: {
       type: String,
       enum: {
-        values: ['admin', 'user'],
-        message: '角色必须是 admin 或 user'
+        // U-006 三角色体系：admin/analyst/editor
+        // 同时保留 'user' 用于旧数据兼容（注册时不再产生 user 角色）
+        values: ['admin', 'analyst', 'editor', 'user'],
+        message: '角色必须是 admin、analyst 或 editor'
       },
-      default: 'user',
+      default: 'editor',
     },
   },
   {
