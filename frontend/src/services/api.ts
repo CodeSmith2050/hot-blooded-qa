@@ -317,4 +317,21 @@ export const templateApi = {
     apiClient.post('/templates/init'),
 };
 
+// ==================== 微信 JS-SDK 相关 API ====================
+
+/**
+ * 微信 JS-SDK API（F-004）
+ *
+ * 获取 wx.config 所需的签名配置。
+ * 后端未配置 WX_APPID/WX_APP_SECRET 时返回 503，前端应降级为仅 UA 检测模式。
+ */
+export const wxApi = {
+  /**
+   * 获取签名配置
+   * @param url 当前页面 URL（不含 # 后部分，通常为 window.location.href.split('#')[0]）
+   */
+  getSignature: (url: string) =>
+    apiClient.get('/wx/signature', { params: { url } }),
+};
+
 export default apiClient;

@@ -28,20 +28,24 @@ const frontendToBackendTypeMap: Record<string, string> = {
 
 /**
  * 题型映射：后端存储类型 -> 前端类型
+ *
+ * E-002 矩阵题：保持 'matrix' 不降级（之前误降级为 'text'，导致前端无法识别）
  */
 const backendToFrontendTypeMap: Record<string, string> = {
   'single': 'single_choice',
   'multiple': 'multiple_choice',
   'text': 'text',
   'rating': 'rating',
-  'matrix': 'text',
+  'matrix': 'matrix',
 };
 
 /**
  * 将前端题目格式转换为后端存储格式
- * 
+ *
  * 前端格式: { type: 'single_choice', options: [{id, text, score}, ... }
  * 后端格式: { type: 'single', options: ['选项A', '选项B'], id, order, ... }
+ *
+ * E-002 矩阵题：matrix 类型保留原值，并复制 matrixRows/matrixCols 字段
  */
 function convertFrontendToBackendQuestions(frontendQuestions: any[]): any[] {
   if (!frontendQuestions || !Array.isArray(frontendQuestions)) return [];
@@ -73,15 +77,27 @@ function convertFrontendToBackendQuestions(frontendQuestions: any[]): any[] {
       backendQuestion.ratingMax = q.maxRating || q.ratingMax || 5;
     }
 
+    // E-002 矩阵题：复制行/列定义（字符串数组直传）
+    if (backendType === 'matrix') {
+      if (Array.isArray(q.matrixRows)) {
+        backendQuestion.matrixRows = q.matrixRows.filter((r: any) => typeof r === 'string');
+      }
+      if (Array.isArray(q.matrixCols)) {
+        backendQuestion.matrixCols = q.matrixCols.filter((c: any) => typeof c === 'string');
+      }
+    }
+
     return backendQuestion;
   });
 }
 
 /**
  * 将后端存储格式转换为前端显示格式
- * 
+ *
  * 后端格式: { type: 'single', options: ['选项A', '选项B'], ... }
  * 前端格式: { type: 'single_choice', options: [{id, text, score: 0}, ... }
+ *
+ * E-002 矩阵题：matrix 类型回传为 'matrix'，并复制 matrixRows/matrixCols
  */
 function convertBackendToFrontendQuestions(backendQuestions: any[]): any[] {
   if (!backendQuestions || !Array.isArray(backendQuestions)) return [];
@@ -115,6 +131,12 @@ function convertBackendToFrontendQuestions(backendQuestions: any[]): any[] {
     // 评分题
     if (q.type === 'rating') {
       frontendQuestion.maxRating = q.ratingMax || 5;
+    }
+
+    // E-002 矩阵题：回传行/列定义
+    if (q.type === 'matrix') {
+      frontendQuestion.matrixRows = Array.isArray(q.matrixRows) ? [...q.matrixRows] : [];
+      frontendQuestion.matrixCols = Array.isArray(q.matrixCols) ? [...q.matrixCols] : [];
     }
 
     return frontendQuestion;
@@ -513,8 +535,8 @@ export async function importQuestionnaire(
       return;
     }
 
-    // 题型映射（用于验证）
-    const validTypes = ['single_choice', 'multiple_choice', 'text', 'rating', 'date', 'single', 'multiple'];
+    // 题型映射（用于验证）— E-002 追加 matrix
+    const validTypes = ['single_choice', 'multiple_choice', 'text', 'rating', 'date', 'single', 'multiple', 'matrix'];
 
     // 验证每个题目
     for (let i = 0; i < questions.length; i++) {

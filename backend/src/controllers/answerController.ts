@@ -742,8 +742,42 @@ function buildQuestionStats(
         });
       }
       base.ratingDistribution = distribution;
+    } else if (question.type === 'matrix') {
+      // E-002 矩阵题：按行聚合，每行返回各列选项的计数与百分比
+      // 答案值结构：Record<string, string>，key 为行标题，value 为该行选中的列标题
+      const rows = question.matrixRows || [];
+      const cols = question.matrixCols || [];
+
+      // rowStats: 每行一个对象 { row, totalResponses, columns: [{col, count, percentage}] }
+      base.rowStats = rows.map(row => {
+        // 该行所有作答值（每个答案中 row 对应的列选择）
+        const rowValues = values
+          .map(v => {
+            if (v && typeof v === 'object' && !Array.isArray(v)) {
+              return (v as Record<string, string>)[row];
+            }
+            return undefined;
+          })
+          .filter(v => v !== undefined && v !== null && v !== '');
+
+        const rowTotal = rowValues.length;
+        return {
+          row,
+          totalResponses: rowTotal,
+          columns: cols.map(col => {
+            const count = rowValues.filter(v => v === col).length;
+            return {
+              col,
+              count,
+              // 百分比基于该行的总作答数，保留 1 位小数
+              percentage: rowTotal > 0
+                ? Math.round((count / rowTotal) * 1000) / 10
+                : 0
+            };
+          })
+        };
+      });
     }
-    // matrix 类型：当前 totalResponses 已返回，分布待 E-002 完整支持后补齐
 
     return base;
   });

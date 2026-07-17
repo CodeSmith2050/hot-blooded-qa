@@ -388,3 +388,156 @@ describe('问卷管理 - POST /api/questionnaires/import', () => {
     expect(res.body.message).toContain('类型无效');
   });
 });
+
+// ==================== E-002 矩阵题前后端格式转换测试 ====================
+
+describe('问卷管理 - E-002 矩阵题（matrix）转换', () => {
+  /**
+   * 矩阵题前端格式（编辑器传给后端）：
+   * { type: 'matrix', matrixRows: ['行1', '行2'], matrixCols: ['列1', '列2', '列3'] }
+   *
+   * 后端存储格式：与前端一致（matrixRows/matrixCols 字符串数组）
+   * 后端回前端格式：type='matrix'（不再降级为 text），matrixRows/matrixCols 透传
+   */
+
+  it('E-002 创建含矩阵题的问卷应成功，matrixRows/matrixCols 正确保存', async () => {
+    const questions = [
+      {
+        id: 'q1',
+        type: 'matrix',
+        title: '请对以下各项评分',
+        required: true,
+        matrixRows: ['服务态度', '专业水平', '环境舒适度'],
+        matrixCols: ['满意', '一般', '不满意'],
+        order: 0,
+      },
+    ];
+
+    const res = await request(app)
+      .post('/api/questionnaires')
+      .set(authHeader(token))
+      .send({ title: '矩阵题测试', questions });
+
+    expect(res.status).toBe(201);
+    expect(res.body.data._id).toBeDefined();
+    // 后端返回的 questions 应包含 matrixRows/matrixCols
+    const savedQ = res.body.data.questions[0];
+    expect(savedQ.type).toBe('matrix');
+    expect(savedQ.matrixRows).toEqual(['服务态度', '专业水平', '环境舒适度']);
+    expect(savedQ.matrixCols).toEqual(['满意', '一般', '不满意']);
+  });
+
+  it('E-002 查询问卷时矩阵题 type 应为 matrix（不降级为 text）', async () => {
+    // 1. 创建含矩阵题的问卷
+    const questions = [
+      {
+        id: 'q1',
+        type: 'matrix',
+        title: '矩阵题',
+        required: false,
+        matrixRows: ['A', 'B'],
+        matrixCols: ['X', 'Y'],
+        order: 0,
+      },
+    ];
+    const createRes = await request(app)
+      .post('/api/questionnaires')
+      .set(authHeader(token))
+      .send({ title: '矩阵题查询测试', questions });
+    const qid = createRes.body.data._id;
+
+    // 2. 通过 GET /:id 查询，type 应保持为 'matrix'
+    const res = await request(app)
+      .get(`/api/questionnaires/${qid}`)
+      .set(authHeader(token));
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.questions[0].type).toBe('matrix');
+    expect(res.body.data.questions[0].matrixRows).toEqual(['A', 'B']);
+    expect(res.body.data.questions[0].matrixCols).toEqual(['X', 'Y']);
+  });
+
+  it('E-002 矩阵题公开访问时 type 应为 matrix', async () => {
+    const questions = [
+      {
+        id: 'q1',
+        type: 'matrix',
+        title: '公开矩阵题',
+        required: false,
+        matrixRows: ['项目1', '项目2'],
+        matrixCols: ['选项A', '选项B'],
+        order: 0,
+      },
+    ];
+    const createRes = await request(app)
+      .post('/api/questionnaires')
+      .set(authHeader(token))
+      .send({ title: '公开矩阵题测试', questions });
+    const qid = createRes.body.data._id;
+
+    // 发布
+    await request(app)
+      .post(`/api/questionnaires/${qid}/publish`)
+      .set(authHeader(token));
+
+    // 公开访问
+    const res = await request(app).get(`/api/questionnaires/public/${qid}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.questions[0].type).toBe('matrix');
+    expect(res.body.data.questions[0].matrixRows).toEqual(['项目1', '项目2']);
+  });
+
+  it('E-002 import 接口应接受 matrix 类型', async () => {
+    const importData = {
+      title: '导入矩阵题测试',
+      questions: [
+        {
+          id: 'q1',
+          type: 'matrix',
+          title: '导入的矩阵题',
+          required: false,
+          matrixRows: ['行1', '行2'],
+          matrixCols: ['列1', '列2'],
+          order: 0,
+        },
+      ],
+    };
+
+    const res = await request(app)
+      .post('/api/questionnaires/import')
+      .set(authHeader(token))
+      .send(importData);
+
+    expect(res.status).toBe(201);
+    expect(res.body.data._id).toBeDefined();
+    expect(res.body.data.questions[0].type).toBe('matrix');
+  });
+
+  it('E-002 矩阵题至少需要 2 行 2 列（Schema 校验）', async () => {
+    // 仅 1 行，应被 Schema 校验拒绝
+    // 注：create 端点对 ValidationError 统一返回 500（与 Q-003 缺少标题测试一致）
+    const questions = [
+      {
+        id: 'q1',
+        type: 'matrix',
+        title: '行数不足的矩阵题',
+        required: false,
+        matrixRows: ['仅一行'],
+        matrixCols: ['列1', '列2'],
+        order: 0,
+      },
+    ];
+
+    const res = await request(app)
+      .post('/api/questionnaires')
+      .set(authHeader(token))
+      .send({ title: '矩阵题校验测试', questions });
+
+    expect(res.status).toBe(500);
+    expect(res.body.success).toBe(false);
+    // 开发模式下 error 字段携带 Schema 校验消息（含"至少需要2行"）
+    if (process.env.NODE_ENV === 'development') {
+      expect(res.body.error).toContain('至少需要2行');
+    }
+  });
+});
