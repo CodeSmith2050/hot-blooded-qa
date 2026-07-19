@@ -119,24 +119,44 @@ const StatisticsPage: React.FC = () => {
   
   /**
    * 加载统计数据
+   *
+   * 后端 GET /api/answers/statistics/:id 返回结构：
+   *   { success, questionnaire: {...}, statistics: {
+   *     totalAnswers, sourceStats: [{source, count}], deviceStats,
+   *     avgDuration, questionStats: [...]
+   *   } }
+   * 前端 StatisticsData 期望扁平结构，此处做字段映射。
+   * - completedAnswers / completionRate：依赖 S-006 完成率字段，暂留 0
+   * - timeDistribution：依赖 D-006 时间筛选，暂留空数组
    */
   useEffect(() => {
     const fetchStatistics = async () => {
       if (!id) return;
-      
+
       try {
         setLoading(true);
-        
+
         // 获取问卷基本信息
         const questionnaireResponse: any = await questionnaireApi.getById(id);
-        
+
         // 获取统计数据
         const statsResponse: any = await answerApi.getStatistics(id);
-        
+
         if (questionnaireResponse.success && statsResponse.success) {
           const questionnaire = questionnaireResponse.data;
-          const stats = statsResponse.data;
-          
+          // 后端统计数据嵌套在 statistics 字段下
+          const stats = statsResponse.data.statistics || {};
+
+          // sourceStats 数组 → sourceDistribution 对象
+          const sourceDist = { web: 0, wechat: 0, mobile: 0, other: 0 };
+          (stats.sourceStats || []).forEach((s: { source: string; count: number }) => {
+            if (s.source in sourceDist) {
+              (sourceDist as any)[s.source] = s.count;
+            } else {
+              sourceDist.other += s.count;
+            }
+          });
+
           // 构建完整的统计数据
           const fullStats: StatisticsData = {
             questionnaire: {
@@ -146,23 +166,18 @@ const StatisticsPage: React.FC = () => {
             },
             overview: {
               totalAnswers: stats.totalAnswers || 0,
-              completedAnswers: stats.completedAnswers || 0,
-              completionRate: stats.completionRate || 0,
-              averageTime: stats.averageTime || 0,
+              completedAnswers: 0, // 待 S-006 完成率字段实现
+              completionRate: 0,   // 待 S-006 完成率字段实现
+              averageTime: stats.avgDuration || 0,
             },
-            sourceDistribution: stats.sourceDistribution || {
-              web: 0,
-              wechat: 0,
-              mobile: 0,
-              other: 0,
-            },
-            timeDistribution: stats.timeDistribution || {
+            sourceDistribution: sourceDist,
+            timeDistribution: {
               dates: [],
               counts: [],
             },
             questionStats: stats.questionStats || [],
           };
-          
+
           setStatistics(fullStats);
         }
       } catch (error) {
@@ -171,7 +186,7 @@ const StatisticsPage: React.FC = () => {
         setLoading(false);
       }
     };
-    
+
     fetchStatistics();
   }, [id]);
   
@@ -515,27 +530,39 @@ interface QuestionStatCardProps {
 /**
  * 单题统计卡片
  * 包含题目统计图表和详细数据
+ *
+ * 题型兼容：后端统计接口返回后端存储类型 single/multiple/text/rating/matrix
+ * （见项目记忆 6.1 题型映射规则），同时兼容前端旧字段 single_choice/multiple_choice
  */
 const QuestionStatCard: React.FC<QuestionStatCardProps> = ({ stat, index }) => {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<echarts.ECharts | null>(null);
-  
+
+  // 题型判断辅助：兼容 single / single_choice 两种写法
+  const isSingle = stat.questionType === 'single' || stat.questionType === 'single_choice';
+  const isMultiple = stat.questionType === 'multiple' || stat.questionType === 'multiple_choice';
+  const isChoice = isSingle || isMultiple;
+  const isRating = stat.questionType === 'rating';
+  const isText = stat.questionType === 'text';
+
   /**
    * 渲染题目图表
    */
   useEffect(() => {
     if (!chartRef.current) return;
-    
+
+    // 文本题不渲染 ECharts 图表
+    if (isText) return;
+
     // 初始化图表
     if (!chartInstance.current) {
       chartInstance.current = echarts.init(chartRef.current);
     }
-    
+
     let option: echarts.EChartsOption;
-    
-    // 根据题型选择图表类型
-    if (stat.questionType === 'single_choice' || stat.questionType === 'multiple_choice') {
-      // 选择题：柱状图
+
+    // 选择题：柱状图
+    if (isChoice) {
       option = {
         title: {
           text: `Q${index + 1} ${stat.questionTitle}`,
@@ -579,7 +606,7 @@ const QuestionStatCard: React.FC<QuestionStatCardProps> = ({ stat, index }) => {
           top: '15%',
         },
       };
-    } else if (stat.questionType === 'rating') {
+    } else if (isRating) {
       // 评分题：饼图
       option = {
         title: {
@@ -614,22 +641,22 @@ const QuestionStatCard: React.FC<QuestionStatCardProps> = ({ stat, index }) => {
         ],
       };
     } else {
-      // 文本题：不显示图表，显示文字统计
+      // 其他题型（如 matrix）：暂不渲染图表
       return;
     }
-    
+
     chartInstance.current.setOption(option);
-    
+
     // 窗口大小变化时重新调整
     const handleResize = () => chartInstance.current?.resize();
     window.addEventListener('resize', handleResize);
-    
+
     return () => {
       window.removeEventListener('resize', handleResize);
       chartInstance.current?.dispose();
     };
-  }, [stat, index]);
-  
+  }, [stat, index, isChoice, isRating, isText]);
+
   return (
     <Card
       style={{ marginBottom: 16 }}
@@ -637,9 +664,7 @@ const QuestionStatCard: React.FC<QuestionStatCardProps> = ({ stat, index }) => {
     >
       <Row gutter={16}>
         {/* 图表区域 */}
-        {(stat.questionType === 'single_choice' || 
-          stat.questionType === 'multiple_choice' ||
-          stat.questionType === 'rating') && (
+        {(isChoice || isRating) && (
           <Col xs={24} lg={12}>
             <div
               ref={chartRef}
@@ -647,18 +672,18 @@ const QuestionStatCard: React.FC<QuestionStatCardProps> = ({ stat, index }) => {
             />
           </Col>
         )}
-        
+
         {/* 数据表格区域 */}
         <Col xs={24} lg={12}>
           <div style={{ padding: '10px 0' }}>
             <Text strong style={{ marginBottom: 8 }}>
-              题型：{stat.questionType === 'single_choice' ? '单选题' :
-                     stat.questionType === 'multiple_choice' ? '多选题' :
-                     stat.questionType === 'rating' ? '评分题' :
-                     stat.questionType === 'text' ? '文本题' : '日期题'}
+              题型：{isSingle ? '单选题' :
+                     isMultiple ? '多选题' :
+                     isRating ? '评分题' :
+                     isText ? '文本题' : stat.questionType}
             </Text>
             <Divider style={{ margin: '8px 0' }} />
-            
+
             {/* 选择题选项统计 */}
             {stat.options && (
               <Table
@@ -677,9 +702,9 @@ const QuestionStatCard: React.FC<QuestionStatCardProps> = ({ stat, index }) => {
                 size="small"
               />
             )}
-            
+
             {/* 评分题统计 */}
-            {stat.questionType === 'rating' && stat.averageRating && (
+            {isRating && stat.averageRating !== undefined && (
               <Statistic
                 title="平均评分"
                 value={stat.averageRating}
@@ -688,9 +713,9 @@ const QuestionStatCard: React.FC<QuestionStatCardProps> = ({ stat, index }) => {
                 valueStyle={{ color: '#fa8c16' }}
               />
             )}
-            
+
             {/* 文本题统计 */}
-            {stat.questionType === 'text' && stat.textResponses && (
+            {isText && stat.textResponses && (
               <div>
                 <Text type="secondary">共 {stat.totalResponses} 条回答</Text>
                 <Divider style={{ margin: '8px 0' }} />
