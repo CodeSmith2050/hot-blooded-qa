@@ -57,6 +57,7 @@ export interface IAnswer extends Document {
   respondent?: IRespondent;                   // 回答者信息
   source: AnswerSource;                        // 提交来源
   device: DeviceType;                         // 设备类型
+  ipAddress?: string;                          // 脱敏后的客户端 IP（S-004）
   submittedAt: Date;                          // 提交时间
   duration: number;                            // 填写时长（秒）
 }
@@ -127,6 +128,12 @@ const answerSchema = new Schema<IAnswer>(
       },
       default: 'desktop'
     },
+    ipAddress: {
+      // 存储脱敏后的 IP（保留前 3 段，末段置 0），用于风控分析
+      // 不存储原始 IP，符合 PRD 隐私保护要求（S-004）
+      type: String,
+      default: ''
+    },
     submittedAt: {
       type: Date,
       default: Date.now
@@ -148,6 +155,10 @@ const answerSchema = new Schema<IAnswer>(
 
 // 复合索引：加速按问卷和时间排序查询
 answerSchema.index({ questionnaireId: 1, submittedAt: -1 });
+
+// 复合索引：F-006 防重复提交查询
+// 用于"同一 IP + 问卷在 N 秒内是否已有答案"的快速判定
+answerSchema.index({ ipAddress: 1, questionnaireId: 1, submittedAt: -1 });
 
 // 单字段索引：按来源统计
 answerSchema.index({ source: 1 });
