@@ -17,17 +17,22 @@ const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 
 /**
  * 用户注册
- * 
+ *
  * 请求方法：POST
  * 请求路径：/api/auth/register
  * 请求体：{ username, email, password, role? }
- * 
+ *
  * 处理流程：
  * 1. 验证用户名和邮箱是否已被占用
  * 2. 创建新用户（密码会自动加密）
  * 3. 生成JWT令牌
  * 4. 返回用户信息和令牌
- * 
+ *
+ * U-006 角色权限控制规则：
+ *   - 注册时不允许自选 admin 角色（防止越权）
+ *   - 允许自选 analyst / editor，未指定时默认 editor
+ *   - admin 角色由数据库初始化或后续用户管理接口分配
+ *
  * @param req - Express请求对象
  * @param res - Express响应对象
  */
@@ -40,7 +45,7 @@ export async function register(req: Request, res: Response): Promise<void> {
     const existingUser = await User.findOne({
       $or: [{ username }, { email }]
     });
-    
+
     if (existingUser) {
       res.status(400).json({
         success: false,
@@ -49,17 +54,38 @@ export async function register(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // 3. 创建新用户
+    // 3. 角色校验（U-006）：禁止自选 admin，仅允许 analyst/editor
+    let assignedRole: 'analyst' | 'editor' = 'editor';
+    if (role) {
+      if (role === 'admin') {
+        res.status(400).json({
+          success: false,
+          message: '不允许注册管理员账号，请联系系统管理员分配'
+        });
+        return;
+      }
+      if (role === 'analyst' || role === 'editor') {
+        assignedRole = role;
+      } else {
+        res.status(400).json({
+          success: false,
+          message: '角色必须是 analyst 或 editor'
+        });
+        return;
+      }
+    }
+
+    // 4. 创建新用户
     // 注意：User模型的pre('save')中间件会自动加密密码
     const user = new User({
       username,
       email,
       password,
-      role: role || 'user'  // 默认为普通用户
+      role: assignedRole
     });
     await user.save();
 
-    // 4. 生成JWT令牌
+    // 5. 生成JWT令牌
     // JWT包含用户ID和角色信息
     const signOptions: SignOptions = { expiresIn: '7d' };
     const token = jwt.sign(
@@ -68,7 +94,7 @@ export async function register(req: Request, res: Response): Promise<void> {
       signOptions
     );
 
-    // 5. 返回成功响应
+    // 6. 返回成功响应
     res.status(201).json({
       success: true,
       message: '注册成功',
@@ -86,8 +112,8 @@ export async function register(req: Request, res: Response): Promise<void> {
     res.status(500).json({
       success: false,
       message: '注册失败',
-      error: process.env.NODE_ENV === 'development' 
-        ? (error as Error).message 
+      error: process.env.NODE_ENV === 'development'
+        ? (error as Error).message
         : undefined
     });
   }

@@ -3,7 +3,7 @@
 > 本文件为 Trae 项目记忆，会被 IDE 自动加载，作为后续开发的上下文规则。
 > 详细功能进度请查阅 [docs/功能列表.md](../../docs/功能列表.md)。
 >
-> **最后更新**：2026-07-17（批次 4 V-008 仪表盘 Dashboard 完成）
+> **最后更新**：2026-07-17（批次 5 U-006 角色权限 + S-006 完成率字段完成）
 
 ---
 
@@ -12,7 +12,7 @@
 - **项目名称**：热血问答 - 无偿献血人群问卷调研系统
 - **技术栈**：前端 React 18 + Vite + Ant Design 5 + ECharts + Zustand；后端 Node.js + Express + TypeScript + MongoDB (Mongoose 8)
 - **文档位置**：所有产品/方案/进度文档统一存放于 `docs/`，包括 [PRD.md](../../docs/PRD.md)、[可行性方案.md](../../docs/可行性方案.md)、[功能列表.md](../../docs/功能列表.md)
-- **当前总体进度**：约 82.9%（70 项功能中 56 完成、4 部分完成、10 未开始）
+- **当前总体进度**：约 84.3%（70 项功能中 58 完成、2 部分完成、10 未开始）
 
 ---
 
@@ -21,9 +21,9 @@
 | 里程碑 | 状态 | 说明 |
 |-------|------|------|
 | M1 需求/方案/DB设计 | ✅ | 已完成 |
-| M2 前端页面开发 | 🟡 90% | Dashboard 已完成；缺词云/热力图等高级图表 |
-| M3 后端 API 开发 | 🟡 93% | 导出+题目级统计+防重复+限流+脱敏+仪表盘已完成；缺完成率字段、角色权限接口、逻辑跳转、筛选 |
-| M4 测试通过 | 🟡 68% | 后端 API 测试 96 用例全通过；前端/E2E 待补 |
+| M2 前端页面开发 | 🟡 90% | Dashboard、题目级图表已完成；缺词云/热力图/雷达图等高级图表 |
+| M3 后端 API 开发 | 🟡 96% | 导出+题目级统计+防重复+限流+IP 脱敏+仪表盘+角色权限+完成率已完成；缺逻辑跳转、筛选 |
+| M4 测试通过 | 🟡 70% | 后端 API 测试 131 用例全通过；前端/E2E 待补 |
 | M5 上线部署 | 🟡 | 部署配置已就绪，用户手册未交付 |
 
 ---
@@ -50,24 +50,24 @@
 
 | 字段 | 所属模型 | 说明 |
 |-----|---------|-----|
-| `isCompleted` | Answer | 完成率统计依赖 |
+| ~~`isCompleted`~~ | ~~Answer~~ | ✅ S-006 批次 5 已实现 |
 | `userId` / `anonymousId` | Answer | 区分登录/匿名用户 |
-| `ipAddress` | Answer | 需脱敏存储 |
+| ~~`ipAddress`~~ | ~~Answer~~ | ✅ S-004 批次 3 已实现（脱敏末段置 0） |
 | `logicJump` | Question | 逻辑跳转 |
 | `statistics` 表 | - | 预计算统计结果 |
-| `role` 三角色 | User | PRD 要求 admin/analyst/editor，当前仅 admin/user |
+| ~~`role` 三角色~~ | ~~User~~ | ✅ U-006 批次 5 已实现（admin/analyst/editor，保留 user 兼容） |
 
 ---
 
 ## 4. 优先补齐项（按优先级）
 
 **高优先级（影响核心流程）：**
-1. 数据导出（Excel/CSV）- 后端接口 + 前端按钮；`xlsx` 依赖已安装但未使用
-2. 仪表盘 Dashboard - 前端页面 + `/api/statistics/dashboard` 接口
-3. 题目级统计分布 - 后端按题目选项聚合管道 + 前端柱状图
-4. 防重复提交 - `express-rate-limit` + 前端防抖
-5. 角色权限控制 - 三角色体系 + 接口角色级校验
-6. 后端单元测试 - M4 里程碑关键交付物
+1. ~~数据导出（Excel/CSV）~~ ✅ D-005 批次 1 已完成
+2. ~~仪表盘 Dashboard~~ ✅ V-008 批次 4 已完成
+3. ~~题目级统计分布~~ ✅ D-004 批次 2 已完成
+4. ~~防重复提交~~ ✅ F-006/S-005 批次 3 已完成
+5. ~~角色权限控制~~ ✅ U-006 批次 5 已完成
+6. ~~后端单元测试~~ ✅ M4 已完成 131 用例
 
 **中优先级（影响体验与扩展性）：**
 7. 进度保存/断点续填（localStorage）
@@ -76,9 +76,9 @@
 10. 矩阵题完整支持（前后端格式转换器当前把 matrix 默认转 text）
 11. 词云图 / 热力图 / 雷达图
 12. 时间/渠道筛选
-13. 完成率字段与计算
+13. ~~完成率字段与计算~~ ✅ S-006 批次 5 已完成
 14. 统计结果预计算缓存
-15. IP 收集与脱敏
+15. ~~IP 收集与脱敏~~ ✅ S-004 批次 3 已完成
 
 ---
 
@@ -203,3 +203,4 @@
 | 2026-07-17 | 批次 2：D-004 题目级统计分布 + V-004 题目级图表完成。后端 getStatistics 新增 questionStats 字段（按题型聚合：单选/多选选项计数+百分比、文本去重计数、评分平均分+分布），新增 6 个测试用例；前端修复 api.ts statistics 路径不一致 + fetchStatistics 字段映射 + QuestionStatCard 题型判断兼容 single/multiple。整体进度 76.4% → 77.9%，M2 80% → 85%，M3 80% → 85%，M4 55% → 60% |
 | 2026-07-17 | 批次 3：F-006 防重复提交 + S-005 限流 + S-004 IP 脱敏完成。新增 `middleware/rateLimit.ts` 内存固定窗口限流（5 次/分钟），submitAnswer 内 DEDUP_WINDOW_MS=10s 业务级防重复；Answer 模型新增 ipAddress 字段（脱敏末段置 0）+ 复合索引；新增 7 个 F-006/S-005/S-004 专项测试用例；BUG-002 同步修复（answer.test.ts 引入 submitAnswer 辅助函数分配唯一 IP）。整体进度 77.9% → 81.4%，M3 85% → 90%，M4 60% → 65% |
 | 2026-07-17 | 批次 4：V-008 仪表盘 Dashboard 完成。后端新增 `GET /api/answers/statistics/dashboard` 跨问卷聚合接口（getDashboard，6 个聚合管道：overview/trend/sourceStats/deviceStats/questionnaireStatusStats/topQuestionnaires，含近 7 天趋势补全 0 填充）；前端新增 `DashboardPage.tsx`（5 概览卡片 + 4 ECharts 图表 + Top 5 问卷 Table），App.tsx 新增 dashboard 路由并改为默认首页，AdminLayout 新增仪表盘菜单项（DashboardOutlined）；新增 10 个 V-008 测试用例。整体进度 81.4% → 82.9%，M2 85% → 90%，M3 90% → 93%，M4 65% → 68% |
+| 2026-07-17 | 批次 5：U-006 角色权限控制 + S-006 完成率字段完成。U-006：User 模型扩展为 admin/analyst/editor（保留 user 兼容旧数据，按 editor 处理）+ UserRole 类型；auth.ts 新增 requireRoles 工厂函数；authController register 禁止自选 admin、默认 editor；问卷路由读三角色/写 admin+editor；答案路由仅 admin+analyst；helpers registerAndLogin 先 editor 注册再 Model 升级目标角色。S-006：Answer 模型新增 isCompleted 字段（带索引）；answerController checkCompletion（所有 required 题目非空）+ isAnswerEmpty（4 种空值类型，数字 0 视为已作答）；submitAnswer 返回 isCompleted；getStatistics 返回 completedAnswers+completionRate；getDashboard 返回跨问卷 avgCompletionRate。新增 22 个 U-006 + 13 个 S-006 测试用例。整体进度 82.9% → 84.3%，M3 93% → 96%，M4 68% → 70% |

@@ -124,14 +124,14 @@ export function authMiddleware(
 
 /**
  * 管理员权限中间件
- * 
+ *
  * 功能：
  * - 检查当前用户是否为管理员
  * - 通常在authMiddleware之后使用
- * 
+ *
  * 使用方式：
  * router.delete('/admin-only', authMiddleware, adminMiddleware, handler);
- * 
+ *
  * @param req - Express请求对象
  * @param res - Express响应对象
  * @param next - 下一个中间件函数
@@ -149,6 +149,52 @@ export function adminMiddleware(
     });
     return;
   }
-  
+
   next();
+}
+
+/**
+ * 角色权限中间件工厂（U-006）
+ *
+ * 功能：
+ * - 生成一个仅允许指定角色访问的中间件
+ * - 必须在 authMiddleware 之后使用（依赖 req.userRole）
+ * - 旧 'user' 角色按 'editor' 处理（向后兼容）
+ *
+ * 使用方式：
+ *   router.post('/', authMiddleware, requireRoles('admin', 'editor'), handler);
+ *
+ * @param allowedRoles 允许访问的角色列表
+ * @returns Express 中间件
+ */
+export function requireRoles(
+  ...allowedRoles: string[]
+): (req: Request, res: Response, next: NextFunction) => void {
+  return function (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): void {
+    // 兜底：未经过 authMiddleware 时 userRole 为空
+    if (!req.userRole) {
+      res.status(401).json({
+        success: false,
+        message: '未提供认证信息'
+      });
+      return;
+    }
+
+    // 旧 'user' 角色按 'editor' 处理（向后兼容历史数据）
+    const effectiveRole = req.userRole === 'user' ? 'editor' : req.userRole;
+
+    if (!allowedRoles.includes(effectiveRole)) {
+      res.status(403).json({
+        success: false,
+        message: '权限不足，无法执行此操作'
+      });
+      return;
+    }
+
+    next();
+  };
 }

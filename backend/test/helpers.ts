@@ -13,6 +13,7 @@ import app from '../src/app';
 import { Questionnaire } from '../src/models/Questionnaire';
 import { Template } from '../src/models/Template';
 import { presetTemplates } from '../src/data/templates';
+import { User, UserRole } from '../src/models/User';
 
 // ==================== 用户相关辅助 ====================
 
@@ -28,6 +29,11 @@ export interface TestUser {
 
 /**
  * 默认测试用户
+ *
+ * 注意：U-006 实施后，defaultUser 不携带 role 字段：
+ *   - 直接走 /api/auth/register 时，注册接口默认分配 editor 角色
+ *   - 通过 registerAndLogin(defaultUser) 时，helper 会将角色升级为 admin
+ *     （因为现有测试默认需要 admin 权限覆盖所有管理操作）
  */
 export const defaultUser: TestUser = {
   username: 'testuser',
@@ -38,22 +44,39 @@ export const defaultUser: TestUser = {
 /**
  * 注册并登录用户，返回 { userId, token, user }
  *
+ * 行为说明（U-006 实施后）：
+ *   - user.role === 'admin' 时：先走注册接口（得到 editor），再通过 Model 升级为 admin
+ *     （因为注册接口禁止自选 admin，但测试需要 admin 角色覆盖管理操作）
+ *   - user.role === 'analyst' / 'editor' 时：直接走注册接口
+ *   - 未指定 user.role 时：默认升级为 admin（保持现有测试兼容）
+ *
  * @param user 用户信息（可选，默认使用 defaultUser）
  */
 export async function registerAndLogin(
   user: TestUser = defaultUser
 ): Promise<{ userId: string; token: string; user: any }> {
-  // 注册
+  // 1. 通过注册接口创建用户（注册接口仅允许 analyst/editor）
+  //    发送 role: 'editor' 以绕过注册接口角色校验
   const registerRes = await request(app)
     .post('/api/auth/register')
-    .send(user);
+    .send({
+      ...user,
+      role: 'editor',
+    });
 
   // 注册失败时直接抛出，便于定位问题
   if (registerRes.status !== 201) {
     throw new Error(`注册失败: ${registerRes.status} ${JSON.stringify(registerRes.body)}`);
   }
 
-  // 登录获取 token
+  // 2. 若目标角色是 admin 或 analyst，通过 Model 直接更新角色
+  //    （注册接口不允许自选这些角色，但测试需要覆盖三角色场景）
+  const targetRole = user.role || 'admin';
+  if (targetRole !== 'editor') {
+    await User.findByIdAndUpdate(registerRes.body.user.id, { role: targetRole as UserRole });
+  }
+
+  // 3. 登录获取 token（此时角色已为目标角色）
   const loginRes = await request(app)
     .post('/api/auth/login')
     .send({ username: user.username, password: user.password });
