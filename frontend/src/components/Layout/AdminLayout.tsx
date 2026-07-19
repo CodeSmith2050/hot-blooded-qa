@@ -25,6 +25,7 @@ import {
   FileTextOutlined,
   PlusOutlined,
   BarChartOutlined,
+  DashboardOutlined,
   LogoutOutlined,
   UserOutlined,
   BellOutlined,
@@ -57,6 +58,11 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
    * label: 菜单文本
    */
   const menuItems = [
+    {
+      key: '/admin/dashboard',
+      icon: <DashboardOutlined />,
+      label: '仪表盘',
+    },
     {
       key: '/admin/list',
       icon: <FileTextOutlined />,
