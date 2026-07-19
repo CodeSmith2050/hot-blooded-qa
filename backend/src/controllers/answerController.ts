@@ -15,6 +15,92 @@ import { Answer, AnswerValue } from '../models/Answer';
 import { Questionnaire, IQuestion } from '../models/Questionnaire';
 
 /**
+ * 构建答案查询 filter（D-006 筛选）
+ *
+ * 支持按时间范围、来源、设备、完成状态筛选
+ * 从 req.query 提取参数，返回 MongoDB 查询条件对象
+ *
+ * @param questionnaireId 问卷 ID（可选，统计和导出时传入，仪表盘不传）
+ * @param query HTTP 查询参数
+ */
+function buildAnswerFilter(
+  questionnaireId: string | undefined,
+  query: Record<string, any>
+): Record<string, any> {
+  const filter: Record<string, any> = {};
+  if (questionnaireId) {
+    filter.questionnaireId = questionnaireId;
+  }
+  // 时间范围
+  if (query.startDate || query.endDate) {
+    filter.submittedAt = {};
+    if (query.startDate) {
+      filter.submittedAt.$gte = new Date(query.startDate as string);
+    }
+    if (query.endDate) {
+      const end = new Date(query.endDate as string);
+      end.setHours(23, 59, 59, 999);
+      filter.submittedAt.$lte = end;
+    }
+  }
+  // 来源筛选
+  if (query.source) {
+    filter.source = query.source;
+  }
+  // 设备筛选
+  if (query.device) {
+    filter.device = query.device;
+  }
+  // 完成状态筛选
+  if (query.isCompleted !== undefined) {
+    filter.isCompleted = query.isCompleted === 'true';
+  }
+  return filter;
+}
+
+/**
+ * S-007 统计结果内存缓存
+ *
+ * LRU 缓存 + TTL 5 分钟，避免重复聚合查询
+ * 缓存 key = questionnaireId + filter 参数的 JSON 序列化
+ * 提交新答案时清除该问卷的缓存
+ */
+const statsCache = new Map<string, { data: any; expireAt: number }>();
+const CACHE_TTL_MS = 5 * 60 * 1000;  // 5 分钟
+const CACHE_MAX_SIZE = 100;
+
+function getCacheKey(questionnaireId: string, query: Record<string, any>): string {
+  return `${questionnaireId}:${JSON.stringify(query)}`;
+}
+
+function getStatsCache(key: string): any | null {
+  const entry = statsCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expireAt) {
+    statsCache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+function setStatsCache(key: string, data: any): void {
+  // LRU 淘汰
+  if (statsCache.size >= CACHE_MAX_SIZE) {
+    const oldest = statsCache.keys().next().value;
+    if (oldest) statsCache.delete(oldest);
+  }
+  statsCache.set(key, { data, expireAt: Date.now() + CACHE_TTL_MS });
+}
+
+function invalidateStatsCache(questionnaireId: string): void {
+  for (const key of statsCache.keys()) {
+    if (key.startsWith(`${questionnaireId}:`)) {
+      statsCache.delete(key);
+    }
+  }
+}
+
+/**
  * 提交问卷答案
  *
  * 请求方法：POST
@@ -118,6 +204,9 @@ export async function submitAnswer(
     });
 
     await answer.save();
+
+    // S-007 提交新答案后清除该问卷的统计缓存
+    invalidateStatsCache(questionnaireId);
 
     // 6. 返回成功响应
     res.status(201).json({
@@ -389,43 +478,51 @@ export async function getStatistics(
       return;
     }
 
-    // 2. 统计总答案数与完成数（S-006）
+    // D-006 构建筛选条件
+    const filter = buildAnswerFilter(questionnaireId, req.query);
+
+    // S-007 缓存命中检查
+    const cacheKey = getCacheKey(questionnaireId, req.query);
+    const cached = getStatsCache(cacheKey);
+    if (cached) {
+      res.json(cached);
+      return;
+    }
+
+    // 2. 统计总答案数与完成数（S-006，D-006 使用 filter）
     const [totalAnswers, completedAnswers] = await Promise.all([
-      Answer.countDocuments({ questionnaireId }),
-      Answer.countDocuments({ questionnaireId, isCompleted: true })
+      Answer.countDocuments(filter),
+      Answer.countDocuments({ ...filter, isCompleted: true })
     ]);
     // 完成率 = 完成数 / 总数 * 100，保留 1 位小数；分母为 0 时返回 0
     const completionRate = totalAnswers > 0
       ? Math.round((completedAnswers / totalAnswers) * 1000) / 10
       : 0;
 
-    // 3. 按来源统计（使用聚合管道）
+    // 3. 按来源统计（D-006 使用 filter）
     const sourceStats = await Answer.aggregate([
-      { $match: { questionnaireId: new mongoose.Types.ObjectId(questionnaireId) } },
+      { $match: filter },
       { $group: { _id: '$source', count: { $sum: 1 } } }
-      // $match: 筛选条件
-      // $group: 分组统计，_id是分组字段
     ]);
 
-    // 4. 按设备类型统计
+    // 4. 按设备类型统计（D-006 使用 filter）
     const deviceStats = await Answer.aggregate([
-      { $match: { questionnaireId: new mongoose.Types.ObjectId(questionnaireId) } },
+      { $match: filter },
       { $group: { _id: '$device', count: { $sum: 1 } } }
     ]);
 
-    // 5. 计算平均填写时长
+    // 5. 计算平均填写时长（D-006 使用 filter）
     const avgDurationResult = await Answer.aggregate([
-      { $match: { questionnaireId: new mongoose.Types.ObjectId(questionnaireId) } },
+      { $match: filter },
       { $group: { _id: null, avgDuration: { $avg: '$duration' } } }
-      // _id: null 表示所有文档作为一组
     ]);
 
-    // 6. 题目级统计分布（D-004）：拉取全部答案后内存聚合
-    const allAnswers = await Answer.find({ questionnaireId }).select('answers');
+    // 6. 题目级统计分布（D-004/D-006）：拉取筛选后答案后内存聚合
+    const allAnswers = await Answer.find(filter).select('answers');
     const questionStats = buildQuestionStats(questionnaire.questions, allAnswers);
 
     // 7. 返回统计数据
-    res.json({
+    const result = {
       success: true,
       questionnaire: {
         id: questionnaire._id,
@@ -448,7 +545,12 @@ export async function getStatistics(
         avgDuration: Math.round(avgDurationResult[0]?.avgDuration || 0),
         questionStats
       }
-    });
+    };
+
+    // S-007 写入缓存
+    setStatsCache(cacheKey, result);
+
+    res.json(result);
 
   } catch (error) {
     console.error('获取统计数据失败:', error);
@@ -504,6 +606,17 @@ export async function getDashboard(
   res: Response
 ): Promise<void> {
   try {
+    // D-006 构建筛选条件（仪表盘不限定问卷 ID）
+    const filter = buildAnswerFilter(undefined, req.query);
+
+    // S-007 缓存命中检查
+    const dashboardCacheKey = `dashboard:${JSON.stringify(req.query)}`;
+    const dashboardCached = getStatsCache(dashboardCacheKey);
+    if (dashboardCached) {
+      res.json(dashboardCached);
+      return;
+    }
+
     // 1. 概览：总问卷数、活跃问卷数、总填写数、今日新增、平均时长、完成数
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
@@ -518,14 +631,15 @@ export async function getDashboard(
     ] = await Promise.all([
       Questionnaire.countDocuments(),
       Questionnaire.countDocuments({ status: 'published' }),
-      Answer.countDocuments(),
-      Answer.countDocuments({ submittedAt: { $gte: startOfToday } }),
+      Answer.countDocuments(filter),
+      Answer.countDocuments({ ...filter, submittedAt: { $gte: startOfToday } }),
       Answer.aggregate([
+        { $match: filter },
         { $group: { _id: null, avgDuration: { $avg: '$duration' } } }
       ]),
-      // S-006 跨问卷完成数
+      // S-006 跨问卷完成数（D-006 使用 filter）
       Answer.aggregate([
-        { $match: { isCompleted: true } },
+        { $match: { ...filter, isCompleted: true } },
         { $group: { _id: null, completed: { $sum: 1 } } }
       ])
     ]);
@@ -536,13 +650,27 @@ export async function getDashboard(
       ? Math.round((completedAnswers / totalAnswers) * 1000) / 10
       : 0;
 
-    // 2. 近 7 天填写趋势：按日期分组
+    // 2. 近 7 天填写趋势：按日期分组（D-006 与 filter 时间范围取交集）
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
     sevenDaysAgo.setHours(0, 0, 0, 0);
 
+    // 趋势查询：以 7 天窗口为基准，叠加 filter 中已有的条件
+    const trendFilter: Record<string, any> = { ...filter };
+    // 若 filter 已含 submittedAt 条件则合并，否则用 7 天窗口
+    if (trendFilter.submittedAt) {
+      // filter 已有时间范围，与 7 天窗口取交集（取更宽的范围）
+      if (!trendFilter.submittedAt.$gte || new Date(trendFilter.submittedAt.$gte as Date) > sevenDaysAgo) {
+        // 若 filter 起始时间晚于 7 天前，不改（保留筛选器的时间）
+      } else {
+        trendFilter.submittedAt.$gte = sevenDaysAgo;
+      }
+    } else {
+      trendFilter.submittedAt = { $gte: sevenDaysAgo };
+    }
+
     const trendRaw = await Answer.aggregate([
-      { $match: { submittedAt: { $gte: sevenDaysAgo } } },
+      { $match: trendFilter },
       {
         $group: {
           _id: {
@@ -564,13 +692,15 @@ export async function getDashboard(
       trend.push({ date: dateStr, count: found ? found.count : 0 });
     }
 
-    // 3. 来源分布（跨所有答案）
+    // 3. 来源分布（D-006 使用 filter）
     const sourceStatsRaw = await Answer.aggregate([
+      { $match: filter },
       { $group: { _id: '$source', count: { $sum: 1 } } }
     ]);
 
-    // 4. 设备分布（跨所有答案）
+    // 4. 设备分布（D-006 使用 filter）
     const deviceStatsRaw = await Answer.aggregate([
+      { $match: filter },
       { $group: { _id: '$device', count: { $sum: 1 } } }
     ]);
 
@@ -607,7 +737,7 @@ export async function getDashboard(
     });
 
     // 7. 返回仪表盘数据
-    res.json({
+    const dashboardResult = {
       success: true,
       data: {
         overview: {
@@ -633,7 +763,12 @@ export async function getDashboard(
         })),
         topQuestionnaires
       }
-    });
+    };
+
+    // S-007 写入缓存
+    setStatsCache(dashboardCacheKey, dashboardResult);
+
+    res.json(dashboardResult);
 
   } catch (error) {
     console.error('获取仪表盘数据失败:', error);
@@ -819,8 +954,11 @@ export async function exportAnswers(
       return;
     }
 
-    // 2. 拉取全部答案（按提交时间升序，便于阅读）
-    const answers = await Answer.find({ questionnaireId })
+    // D-006 构建筛选条件
+    const filter = buildAnswerFilter(questionnaireId, req.query);
+
+    // 2. 拉取筛选后答案（按提交时间升序，便于阅读）
+    const answers = await Answer.find(filter)
       .sort({ submittedAt: 1 });
 
     // 3. 构造表头与数据行

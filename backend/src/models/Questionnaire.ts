@@ -21,6 +21,24 @@ import mongoose, { Document, Schema } from 'mongoose';
 export type QuestionType = 'single' | 'multiple' | 'text' | 'rating' | 'matrix';
 
 /**
+ * 逻辑跳转条件
+ */
+export interface LogicJumpCondition {
+  operator: 'equals' | 'not_equals' | 'contains' | 'greater_than' | 'less_than';
+  value: string | number;
+}
+
+/**
+ * 逻辑跳转规则
+ * 当答案满足任一条件时，跳转到目标题目
+ */
+export interface LogicJumpRule {
+  conditions: LogicJumpCondition[];
+  targetQuestionId: string;
+  conditionLogic?: 'and' | 'or';  // 条件逻辑，默认 'or'
+}
+
+/**
  * 问题接口定义
  * 描述问卷中单个问题的结构
  */
@@ -35,6 +53,7 @@ export interface IQuestion {
   matrixRows?: string[];         // 矩阵题行标题
   matrixCols?: string[];         // 矩阵题列标题
   order: number;                 // 问题顺序
+  logicJumps?: LogicJumpRule[];    // 逻辑跳转规则
 }
 
 /**
@@ -142,6 +161,24 @@ const questionSchema = new Schema<IQuestion>(
       type: Number,
       required: [true, '问题顺序不能为空'],
       min: [0, '问题顺序不能为负数']
+    },
+    logicJumps: {
+      type: [{
+        conditions: [{
+          operator: {
+            type: String,
+            enum: ['equals', 'not_equals', 'contains', 'greater_than', 'less_than']
+          },
+          value: Schema.Types.Mixed
+        }],
+        targetQuestionId: { type: String },
+        conditionLogic: {
+          type: String,
+          enum: ['and', 'or'],
+          default: 'or'
+        }
+      }],
+      default: undefined
     }
   },
   { _id: false }  // 不自动生成_id

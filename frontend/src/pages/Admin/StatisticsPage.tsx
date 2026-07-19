@@ -108,6 +108,11 @@ const StatisticsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [statistics, setStatistics] = useState<StatisticsData | null>(null);
   const [timeRange, setTimeRange] = useState<[string, string] | null>(null);
+
+  // D-006 筛选参数
+  const [filterSource, setFilterSource] = useState<string | undefined>(undefined);
+  const [filterDevice, setFilterDevice] = useState<string | undefined>(undefined);
+  const [filterDateRange, setFilterDateRange] = useState<[any, any] | null>(null);
   
   // 图表引用
   const sourceChartRef = useRef<HTMLDivElement>(null);
@@ -140,7 +145,16 @@ const StatisticsPage: React.FC = () => {
         const questionnaireResponse: any = await questionnaireApi.getById(id);
 
         // 获取统计数据
-        const statsResponse: any = await answerApi.getStatistics(id);
+        // D-006 筛选参数
+        const filterParams: any = {};
+        if (filterDateRange && filterDateRange[0] && filterDateRange[1]) {
+          filterParams.startDate = filterDateRange[0].format('YYYY-MM-DD');
+          filterParams.endDate = filterDateRange[1].format('YYYY-MM-DD');
+        }
+        if (filterSource) filterParams.source = filterSource;
+        if (filterDevice) filterParams.device = filterDevice;
+
+        const statsResponse: any = await answerApi.getStatistics(id, filterParams);
 
         if (questionnaireResponse.success && statsResponse.success) {
           const questionnaire = questionnaireResponse.data;
@@ -166,8 +180,8 @@ const StatisticsPage: React.FC = () => {
             },
             overview: {
               totalAnswers: stats.totalAnswers || 0,
-              completedAnswers: 0, // 待 S-006 完成率字段实现
-              completionRate: 0,   // 待 S-006 完成率字段实现
+              completedAnswers: stats.completedAnswers || 0,
+              completionRate: stats.completionRate || 0,
               averageTime: stats.avgDuration || 0,
             },
             sourceDistribution: sourceDist,
@@ -188,7 +202,7 @@ const StatisticsPage: React.FC = () => {
     };
 
     fetchStatistics();
-  }, [id]);
+  }, [id, filterSource, filterDevice, filterDateRange]);
   
   // ==================== 图表渲染 ====================
   
@@ -435,7 +449,43 @@ const StatisticsPage: React.FC = () => {
           </Button>
         </Space>
       </div>
-      
+
+      {/* D-006 筛选面板 */}
+      <Card style={{ marginBottom: 16 }} size="small">
+        <Space wrap>
+          <Text strong>筛选：</Text>
+          <RangePicker
+            placeholder={['开始日期', '结束日期']}
+            onChange={(dates) => setFilterDateRange(dates as [any, any] | null)}
+            allowClear
+          />
+          <Select
+            placeholder="来源"
+            allowClear
+            style={{ width: 120 }}
+            value={filterSource}
+            onChange={setFilterSource}
+            options={[
+              { label: '网页端', value: 'web' },
+              { label: '微信', value: 'wechat' },
+              { label: '移动端', value: 'mobile' },
+            ]}
+          />
+          <Select
+            placeholder="设备"
+            allowClear
+            style={{ width: 120 }}
+            value={filterDevice}
+            onChange={setFilterDevice}
+            options={[
+              { label: '桌面端', value: 'desktop' },
+              { label: '手机', value: 'mobile' },
+              { label: '平板', value: 'tablet' },
+            ]}
+          />
+        </Space>
+      </Card>
+
       {/* 总览统计卡片 */}
       <Row gutter={16} style={{ marginBottom: 24 }}>
         <Col xs={12} sm={6}>
@@ -544,6 +594,7 @@ const QuestionStatCard: React.FC<QuestionStatCardProps> = ({ stat, index }) => {
   const isChoice = isSingle || isMultiple;
   const isRating = stat.questionType === 'rating';
   const isText = stat.questionType === 'text';
+  const isMatrix = stat.questionType === 'matrix';
 
   /**
    * 渲染题目图表
@@ -607,7 +658,48 @@ const QuestionStatCard: React.FC<QuestionStatCardProps> = ({ stat, index }) => {
         },
       };
     } else if (isRating) {
-      // 评分题：饼图
+      // V-005 评分题雷达图
+      option = {
+        title: {
+          text: `Q${index + 1} ${stat.questionTitle}`,
+          left: 'left',
+          textStyle: { fontSize: 14 },
+        },
+        tooltip: {},
+        radar: {
+          indicator: stat.ratingDistribution?.map(r => ({
+            name: `${r.rating}星`,
+            max: Math.max(...(stat.ratingDistribution?.map(d => d.count) || [1])),
+          })) || [],
+        },
+        series: [
+          {
+            type: 'radar',
+            data: [
+              {
+                value: stat.ratingDistribution?.map(r => r.count) || [],
+                name: '评分分布',
+                areaStyle: { opacity: 0.3 },
+              },
+            ],
+          },
+        ],
+      };
+    } else if (isMatrix) {
+      // V-007 矩阵题热力图
+      const rowStats = (stat as any).rowStats;
+      if (!rowStats || rowStats.length === 0) return;
+
+      const rows = rowStats.map((r: any) => r.row);
+      const cols = rowStats[0]?.columns?.map((c: any) => c.col) || [];
+      const data: number[][] = [];
+      rowStats.forEach((row: any, ri: number) => {
+        row.columns?.forEach((col: any, ci: number) => {
+          data.push([ci, ri, col.count]);
+        });
+      });
+      const maxCount = Math.max(...data.map(d => d[2]), 1);
+
       option = {
         title: {
           text: `Q${index + 1} ${stat.questionTitle}`,
@@ -615,33 +707,50 @@ const QuestionStatCard: React.FC<QuestionStatCardProps> = ({ stat, index }) => {
           textStyle: { fontSize: 14 },
         },
         tooltip: {
-          trigger: 'item',
-          formatter: '{b}星: {c} 人 ({d}%)',
+          formatter: (params: any) => {
+            const d = params.data;
+            return `${rows[d[1]]} × ${cols[d[0]]}: ${d[2]} 人`;
+          },
         },
-        legend: {
+        grid: {
+          left: '15%',
+          right: '10%',
+          bottom: '20%',
+          top: '15%',
+        },
+        xAxis: {
+          type: 'category',
+          data: cols,
+          splitArea: { show: true },
+          axisLabel: { rotate: 30 },
+        },
+        yAxis: {
+          type: 'category',
+          data: rows,
+          splitArea: { show: true },
+        },
+        visualMap: {
+          min: 0,
+          max: maxCount,
+          calculable: true,
           orient: 'horizontal',
-          bottom: 10,
+          left: 'center',
+          bottom: 0,
+          inRange: { color: ['#e0f3db', '#a8ddb5', '#7bccc4', '#43a2ca', '#0868ac'] },
         },
         series: [
           {
-            type: 'pie',
-            radius: ['30%', '50%'],
-            center: ['50%', '45%'],
-            data: stat.ratingDistribution?.map(r => ({
-              value: r.count,
-              name: `${r.rating}`,
-            })) || [],
-            label: {
-              formatter: '{b}星\n{d}%',
-            },
-            itemStyle: {
-              borderRadius: 5,
+            type: 'heatmap',
+            data: data,
+            label: { show: true },
+            emphasis: {
+              itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0, 0, 0, 0.5)' },
             },
           },
         ],
       };
     } else {
-      // 其他题型（如 matrix）：暂不渲染图表
+      // 其他题型：暂不渲染图表
       return;
     }
 
@@ -655,7 +764,7 @@ const QuestionStatCard: React.FC<QuestionStatCardProps> = ({ stat, index }) => {
       window.removeEventListener('resize', handleResize);
       chartInstance.current?.dispose();
     };
-  }, [stat, index, isChoice, isRating, isText]);
+  }, [stat, index, isChoice, isRating, isText, isMatrix]);
 
   return (
     <Card
@@ -664,7 +773,7 @@ const QuestionStatCard: React.FC<QuestionStatCardProps> = ({ stat, index }) => {
     >
       <Row gutter={16}>
         {/* 图表区域 */}
-        {(isChoice || isRating) && (
+        {(isChoice || isRating || isMatrix) && (
           <Col xs={24} lg={12}>
             <div
               ref={chartRef}

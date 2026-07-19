@@ -256,8 +256,8 @@ export const answerApi = {
    * 注意：后端实际路径为 /api/answers/statistics/:questionnaireId
    * （静态段 statistics 必须置于参数路径前，详见 BUG-001）
    */
-  getStatistics: (questionnaireId: string) =>
-    apiClient.get(`/answers/statistics/${questionnaireId}`),
+  getStatistics: (questionnaireId: string, params?: { startDate?: string; endDate?: string; source?: string; device?: string; isCompleted?: string }) =>
+    apiClient.get(`/answers/statistics/${questionnaireId}`, { params }),
 
   /**
    * 获取仪表盘数据（V-008）
@@ -266,8 +266,8 @@ export const answerApi = {
    * 后端路径：GET /api/answers/statistics/dashboard
    * 注意：路由顺序上 /statistics/dashboard 必须在 /statistics/:questionnaireId 之前
    */
-  getDashboard: () =>
-    apiClient.get('/answers/statistics/dashboard'),
+  getDashboard: (params?: { startDate?: string; endDate?: string; source?: string; device?: string; isCompleted?: string }) =>
+    apiClient.get('/answers/statistics/dashboard', { params }),
 
   /**
    * 导出答案数据

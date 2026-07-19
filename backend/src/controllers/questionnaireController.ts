@@ -87,6 +87,11 @@ function convertFrontendToBackendQuestions(frontendQuestions: any[]): any[] {
       }
     }
 
+    // E-006 逻辑跳转：透传 logicJumps
+    if (Array.isArray(q.logicJumps) && q.logicJumps.length > 0) {
+      backendQuestion.logicJumps = q.logicJumps;
+    }
+
     return backendQuestion;
   });
 }
@@ -137,6 +142,11 @@ function convertBackendToFrontendQuestions(backendQuestions: any[]): any[] {
     if (q.type === 'matrix') {
       frontendQuestion.matrixRows = Array.isArray(q.matrixRows) ? [...q.matrixRows] : [];
       frontendQuestion.matrixCols = Array.isArray(q.matrixCols) ? [...q.matrixCols] : [];
+    }
+
+    // E-006 逻辑跳转：透传 logicJumps
+    if (Array.isArray(q.logicJumps) && q.logicJumps.length > 0) {
+      frontendQuestion.logicJumps = q.logicJumps;
     }
 
     return frontendQuestion;
